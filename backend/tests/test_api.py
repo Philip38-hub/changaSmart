@@ -231,3 +231,91 @@ def test_scenario_e_multiple_contributors_end_to_end():
     ]
     assert "John Kamau" in full_text
     assert "Mary Akinyi" in full_text
+
+
+def test_list_projects():
+    before = client.get("/projects").json()
+    client.post("/projects", json={"name": "Listing Test Fund"})
+    after = client.get("/projects").json()
+    assert len(after) == len(before) + 1
+
+
+def test_list_collections_for_project():
+    project = client.post("/projects", json={"name": "Collections List Fund"}).json()
+    main = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    harambee = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "HARAMBEE", "name": "Harambee #1", "target_amount": 20000},
+    ).json()
+
+    collections = client.get(f"/projects/{project['id']}/collections").json()
+    ids = {c["id"] for c in collections}
+    assert ids == {main["id"], harambee["id"]}
+
+
+def test_get_single_collection():
+    project = client.post("/projects", json={"name": "Single Collection Fund"}).json()
+    created = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    fetched = client.get(f"/collections/{created['id']}").json()
+    assert fetched == created
+
+
+def test_list_contributors_for_collection():
+    project = client.post("/projects", json={"name": "Contributors List Fund"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    john = client.post(
+        f"/collections/{collection['id']}/contributors",
+        json={"name": "John Kamau", "expected_amount": 5000},
+    ).json()
+
+    contributors = client.get(f"/collections/{collection['id']}/contributors").json()
+    assert [c["id"] for c in contributors] == [john["id"]]
+
+
+def test_list_transactions_for_collection():
+    project = client.post("/projects", json={"name": "Transactions List Fund"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    txn = client.post(
+        f"/collections/{collection['id']}/transactions",
+        json={
+            "mpesa_code": "LIST001",
+            "sender_name": "John Kamau",
+            "amount": 5000,
+            "timestamp": "2026-09-04T10:00:00Z",
+        },
+    ).json()
+
+    transactions = client.get(f"/collections/{collection['id']}/transactions").json()
+    assert [t["id"] for t in transactions] == [txn["id"]]
+
+
+def test_close_collection():
+    project = client.post("/projects", json={"name": "Close Test Fund"}).json()
+    harambee = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "HARAMBEE", "name": "Harambee #1", "target_amount": 20000},
+    ).json()
+    assert harambee["status"] == "ACTIVE"
+
+    closed = client.post(f"/collections/{harambee['id']}/close").json()
+    assert closed["status"] == "CLOSED"
+
+    fetched = client.get(f"/collections/{harambee['id']}").json()
+    assert fetched["status"] == "CLOSED"
+
+
+def test_close_nonexistent_collection_returns_404():
+    response = client.post("/collections/coll_does_not_exist/close")
+    assert response.status_code == 404

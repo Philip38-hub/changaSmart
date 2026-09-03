@@ -24,6 +24,7 @@ from app.agent import reconcile_transaction
 from app.models import (
     Collection,
     CollectionReport,
+    CollectionStatus,
     CollectionType,
     Contributor,
     HumanReviewAction,
@@ -102,6 +103,11 @@ def create_project(payload: ProjectCreateRequest) -> Project:
     return setup_service.create_project(payload.name, payload.target_amount)
 
 
+@app.get("/projects", response_model=list[Project])
+def list_projects() -> list[Project]:
+    return store.projects.list()
+
+
 @app.get("/projects/{project_id}", response_model=Project)
 def get_project_endpoint(project_id: str) -> Project:
     project = store.projects.get(project_id)
@@ -123,6 +129,33 @@ def create_collection(project_id: str, payload: CollectionCreateRequest) -> Coll
     )
 
 
+@app.get("/projects/{project_id}/collections", response_model=list[Collection])
+def list_collections(project_id: str) -> list[Collection]:
+    if store.projects.get(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return store.collections.list_by_project(project_id)
+
+
+@app.get("/collections/{collection_id}", response_model=Collection)
+def get_collection_endpoint(collection_id: str) -> Collection:
+    collection = store.collections.get(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return collection
+
+
+@app.post("/collections/{collection_id}/close", response_model=Collection)
+def close_collection(collection_id: str) -> Collection:
+    """Close a collection (typically a Harambee session) so it stops
+    accepting new activity. Idempotent -- closing an already-closed
+    collection just returns it unchanged."""
+    collection = store.collections.get(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    collection.status = CollectionStatus.CLOSED
+    return store.collections.update(collection)
+
+
 @app.post("/collections/{collection_id}/contributors", response_model=Contributor)
 def create_contributor(
     collection_id: str, payload: ContributorCreateRequest
@@ -137,6 +170,13 @@ def create_contributor(
     )
 
 
+@app.get("/collections/{collection_id}/contributors", response_model=list[Contributor])
+def list_contributors(collection_id: str) -> list[Contributor]:
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return store.contributors.list_by_collection(collection_id)
+
+
 @app.post("/collections/{collection_id}/transactions", response_model=Transaction)
 def create_transaction(
     collection_id: str, payload: TransactionCandidate
@@ -147,6 +187,13 @@ def create_transaction(
     if store.collections.get(collection_id) is None:
         raise HTTPException(status_code=404, detail="Collection not found")
     return reconciliation_service.create_transaction(collection_id, payload)
+
+
+@app.get("/collections/{collection_id}/transactions", response_model=list[Transaction])
+def list_transactions(collection_id: str) -> list[Transaction]:
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return store.transactions.list_by_collection(collection_id)
 
 
 @app.post("/collections/{collection_id}/reconcile")
