@@ -117,12 +117,29 @@ The agent is explicitly told **not** to calculate totals or balances --
 `generate_collection_report` (deterministic Python) is the only source of
 truth for money.
 
-### Where Bedrock fits
+### Where Bedrock fits, and mock mode
 
-Bedrock is only invoked for the ambiguous branch. The deterministic branch
-and all reporting/WhatsApp-text generation run with zero AWS calls, so the
-whole system (except ambiguous-case reasoning) works with no AWS
-credentials at all.
+Bedrock is only ever invoked for the ambiguous branch. The deterministic
+branch and all reporting/WhatsApp-text generation run with zero AWS calls
+regardless of mode.
+
+`AGENT_MODE` (env var, default **`mock`**) controls what happens on that
+ambiguous branch:
+
+* **`mock`** -- `app/agent.py`'s `reconcile_transaction_with_mock_agent`
+  deterministically simulates the decision: it calls the exact same
+  `find_contributor_candidates` and `flag_for_review` tools, against the
+  same repository, that the real agent would, and always resolves to
+  `NEEDS_HUMAN_REVIEW` (it never auto-confirms an ambiguous case, matching
+  the real agent's own rules). Zero AWS calls, zero cost, works with no
+  credentials. This is what lets a frontend be built and tested without
+  depending on Bedrock quota/access.
+* **`bedrock`** -- the real `strands.Agent` + `BedrockModel`, calling
+  Amazon Bedrock. This is what the deployed Lambda uses by default (see
+  the `AgentMode` SAM parameter, default `bedrock`).
+
+Either way, the *deterministic* exact-match layer runs first and never
+depends on this setting at all -- see `app/agent.py:reconcile_transaction`.
 
 ### paid_by vs. credited_to
 
@@ -145,7 +162,31 @@ cp ../.env.example ../.env
 uvicorn app.main:app --reload
 ```
 
-API docs at http://localhost:8000/docs.
+API docs at http://localhost:8000/docs. `AGENT_MODE` defaults to `mock`
+(see `.env.example`), so the whole reconciliation flow -- including
+ambiguous cases -- works immediately with no AWS credentials at all.
+
+### Developer workflow (Makefile)
+
+A `Makefile` at the repo root wraps the common commands:
+
+```bash
+make test               # pytest -q (offline, 60 tests)
+make run                # uvicorn app.main:app --reload
+make seed               # seed sample data into a running local API
+make sam-validate       # sam validate --lint
+make sam-build          # sam build (needs local python3.12 on PATH)
+make sam-build-container  # sam build --use-container (works regardless of local Python version)
+make sam-local-api      # sam local start-api --parameter-overrides AgentMode=mock
+make sam-deploy         # sam deploy
+make check              # test + sam-validate + sam-build-container, in one go
+```
+
+`make sam-local-api` is useful for testing the *packaged* Lambda/Mangum
+integration, but note: **each request there gets a fresh container, so
+state does not persist between calls** (see Current Limitations below) --
+for iterating with a frontend, `make run` (plain uvicorn, one persistent
+process) is what you want.
 
 ### Seed realistic sample data
 
@@ -169,12 +210,13 @@ Set in `.env` (see `.env.example`):
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `AGENT_MODE` | `mock` | `mock` or `bedrock` -- see above |
 | `AWS_REGION` | `us-east-1` | Bedrock region (auto-set by Lambda in prod) |
-| `BEDROCK_MODEL_ID` | `amazon.nova-micro-v1:0` | Model the agent calls |
+| `BEDROCK_MODEL_ID` | `amazon.nova-micro-v1:0` | Model the agent calls -- configurable, not hard-coded (also drives the Lambda's IAM policy resource ARN, see `infrastructure/aws/template.yaml`) |
 
 No credentials are hard-coded anywhere -- boto3's standard credential
 resolution chain is used (`aws configure`, environment variables, or an
-IAM role in Lambda). You need:
+IAM role in Lambda). For `AGENT_MODE=bedrock` you additionally need:
 
 1. AWS credentials with `bedrock:InvokeModel` / `InvokeModelWithResponseStream`
    permission (see `infrastructure/aws/template.yaml` for the exact scoped
@@ -182,10 +224,25 @@ IAM role in Lambda). You need:
 2. Model access enabled for `amazon.nova-micro-v1:0` in the Bedrock
    console's "Model access" page, in your target region.
 
-Without both of these, deterministic reconciliation (exact matches,
-duplicates, reports, WhatsApp text) still works fully -- only the
-ambiguous-case agent path needs Bedrock, and it fails per-transaction with
-a clear error rather than crashing the request or silently mismatching.
+Without both of these, everything still works in `mock` mode -- and even
+in `bedrock` mode, deterministic reconciliation (exact matches,
+duplicates, reports, WhatsApp text) works fully; only the ambiguous-case
+agent path needs Bedrock, and it fails per-transaction with a clear error
+rather than crashing the request or silently mismatching.
+
+### Local/mock vs. live Bedrock validation
+
+* **Local/mock validation** (`pytest`, all 60 tests, `AGENT_MODE=mock`):
+  fully automated, run on every change, zero AWS dependency.
+* **Live Bedrock validation** (`AGENT_MODE=bedrock`, real
+  `amazon.nova-micro-v1:0` calls): exercised manually against this
+  project's own AWS account during development -- both the
+  payment-on-behalf scenario and the unknown-sender scenario were run
+  live and returned correct `NEEDS_HUMAN_REVIEW` decisions with the
+  right reasoning and preserved `paid_by`. Not part of the automated
+  suite (it costs real tokens and depends on account-specific quota/model
+  access), so it isn't run on every change -- re-run manually via
+  `AGENT_MODE=bedrock` when you want to confirm live behavior.
 
 ## Running tests
 
@@ -211,9 +268,18 @@ group -- deliberately no DynamoDB, no VPC).
 ## Current limitations
 
 * **In-memory storage only.** State lives in the Python process; it does
-  not survive a restart, and in Lambda it does not survive a cold start or
-  persist across concurrent invocations. Fine for a demo, not for
-  production.
+  not survive a restart. **Verified via `sam local start-api`:** each
+  separate HTTP request there gets its own fresh container, so state does
+  *not* persist even between two sequential requests -- this isn't only a
+  cold-start edge case, it's the default local behavior, and real deployed
+  Lambda has no guarantee of container reuse either (it may reuse a warm
+  container for back-to-back low-traffic calls, but this is not something
+  to rely on). **Practical effect: point a frontend at the plain `uvicorn`
+  dev server (a single long-running process, state persists for the whole
+  session) for now, not at `sam local start-api` or the deployed Lambda,
+  until a persistent store replaces the in-memory repository.** This is a
+  deliberate scope boundary, not a bug -- see `app/repositories/base.py`
+  for the interfaces a real store (e.g. DynamoDB) would implement.
 * **No authentication.** Anyone who can reach the API can call any
   endpoint.
 * **No real SMS/WhatsApp/M-PESA integration.** All transaction input is

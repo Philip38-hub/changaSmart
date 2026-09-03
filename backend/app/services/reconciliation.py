@@ -181,6 +181,8 @@ def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transact
             raise ValueError(
                 "contributor_id is required to credit an existing contributor"
             )
+        if store.contributors.get(resolution.contributor_id) is None:
+            raise ValueError(f"Unknown contributor: {resolution.contributor_id}")
         transaction.matched_contributor_id = resolution.contributor_id
         transaction.status = TransactionStatus.CONFIRMED
 

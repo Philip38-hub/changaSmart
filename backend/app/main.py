@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from app.agent import reconcile_transaction
 from app.models import (
@@ -49,26 +50,34 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+    """Domain-rule violations raised by the service layer (e.g. an unknown
+    id referenced in a request body) become a clean 400 with a useful
+    message -- never an unhandled 500 with an internal stack trace."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # Request DTOs (wire-level only; domain models live in app.models)
 # ---------------------------------------------------------------------------
 
 
 class ProjectCreateRequest(BaseModel):
-    name: str
-    target_amount: int | None = None
+    name: str = Field(min_length=1)
+    target_amount: int | None = Field(default=None, ge=0)
 
 
 class CollectionCreateRequest(BaseModel):
     type: CollectionType
-    name: str
-    target_amount: int | None = None
+    name: str = Field(min_length=1)
+    target_amount: int | None = Field(default=None, ge=0)
     date: dt.date | None = None
 
 
 class ContributorCreateRequest(BaseModel):
-    name: str
-    expected_amount: int | None = None
+    name: str = Field(min_length=1)
+    expected_amount: int | None = Field(default=None, ge=0)
     phone: str | None = None
 
 

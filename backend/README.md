@@ -28,11 +28,16 @@ API docs: http://localhost:8000/docs
 pytest
 ```
 
-All 24 tests run fully offline -- none require AWS credentials, because
-they only exercise the deterministic reconciliation path (exact/near-exact
-name matches). Ambiguous-case reasoning (the Strands agent + Bedrock) is
-exercised manually via the running API; see the root README's "Try it"
-section.
+All 60 tests run fully offline -- no AWS credentials needed. This includes
+ambiguous-case reconciliation (payment-on-behalf, unknown sender, etc.):
+`AGENT_MODE` defaults to `mock`, which simulates the agent's decision
+deterministically through the same tools/repository/service flow the real
+Bedrock-backed agent uses (see `app/agent.py`), just without calling AWS.
+
+To exercise the real Bedrock-backed agent instead, set `AGENT_MODE=bedrock`
+(needs AWS credentials with `bedrock:InvokeModel` and model access enabled
+for `amazon.nova-micro-v1:0`) -- see the root README's "Local/mock vs. live
+Bedrock validation" section.
 
 ## Seed sample data
 

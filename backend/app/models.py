@@ -79,8 +79,8 @@ class HumanReviewAction(StrEnum):
 
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("proj"))
-    name: str
-    target_amount: int | None = None
+    name: str = Field(min_length=1)
+    target_amount: int | None = Field(default=None, ge=0)
     status: ProjectStatus = ProjectStatus.ACTIVE
     created_at: dt.datetime = Field(default_factory=_utcnow)
 
@@ -92,8 +92,8 @@ class Collection(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("coll"))
     project_id: str
     type: CollectionType
-    name: str
-    target_amount: int | None = None
+    name: str = Field(min_length=1)
+    target_amount: int | None = Field(default=None, ge=0)
     status: CollectionStatus = CollectionStatus.ACTIVE
     date: dt.date | None = None
     created_at: dt.datetime = Field(default_factory=_utcnow)
@@ -102,8 +102,8 @@ class Collection(BaseModel):
 class Contributor(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("contrib"))
     collection_id: str
-    name: str
-    expected_amount: int | None = None
+    name: str = Field(min_length=1)
+    expected_amount: int | None = Field(default=None, ge=0)
     phone: str | None = None
     status: ContributorStatus = ContributorStatus.EXPECTED
 
@@ -111,10 +111,10 @@ class Contributor(BaseModel):
 class Transaction(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("txn"))
     collection_id: str
-    mpesa_code: str
-    sender_name: str
+    mpesa_code: str = Field(min_length=1)
+    sender_name: str = Field(min_length=1)
     sender_phone: str | None = None
-    amount: int
+    amount: int = Field(gt=0)
     timestamp: dt.datetime
     raw_message: str | None = None
     status: TransactionStatus = TransactionStatus.PENDING
@@ -138,10 +138,10 @@ class TransactionCandidate(BaseModel):
     app's local SMS parser. This is what crosses the wire into the backend
     -- never a raw SMS inbox."""
 
-    mpesa_code: str
-    sender_name: str
+    mpesa_code: str = Field(min_length=1)
+    sender_name: str = Field(min_length=1)
     sender_phone: str | None = None
-    amount: int
+    amount: int = Field(gt=0)
     timestamp: dt.datetime
     raw_message: str | None = None
 

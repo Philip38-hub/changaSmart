@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from botocore.config import Config as BotoConfig
 from strands import Agent, ModelRetryStrategy
+from strands.handlers import null_callback_handler
 from strands.models import BedrockModel
 
 from app.config import get_settings
-from app.models import ReconciliationDecision
+from app.models import ReconciliationDecision, ReconciliationDecisionType
 from app.prompts import SYSTEM_PROMPT
 from app.repositories.memory import store
 from app.services import reconciliation as reconciliation_service
@@ -73,6 +74,11 @@ def build_agent() -> Agent:
             initial_delay=settings.agent_retry_initial_delay_seconds,
             max_delay=settings.agent_retry_max_delay_seconds,
         ),
+        # This runs inside an HTTP request handler, not an interactive CLI
+        # -- the default callback handler prints the agent's full reasoning
+        # trace to stdout on every call, which would spam CloudWatch logs
+        # in Lambda. The returned structured_output is all callers need.
+        callback_handler=null_callback_handler,
     )
 
 
@@ -106,9 +112,83 @@ def reconcile_transaction_with_agent(
     return decision
 
 
+def reconcile_transaction_with_mock_agent(
+    collection_id: str, transaction_id: str
+) -> ReconciliationDecision:
+    """Deterministically simulate what the agent would decide for an
+    ambiguous transaction, without any Bedrock call.
+
+    This exists so the API (and a future frontend) can be developed and
+    demoed without depending on Bedrock quota/access. It reuses the exact
+    same tools, repository, and application flow as the real agent path --
+    it calls `find_contributor_candidates` and `flag_for_review` exactly as
+    the LLM-backed agent would, just with a fixed decision policy instead of
+    model reasoning. It never auto-confirms: like the system prompt asks of
+    the real agent, an ambiguous case always ends in NEEDS_HUMAN_REVIEW.
+    """
+    transaction = store.transactions.get(transaction_id)
+    if transaction is None:
+        raise ValueError(f"Unknown transaction: {transaction_id}")
+
+    candidates = find_contributor_candidates(
+        collection_id=collection_id, transaction_id=transaction_id
+    )
+    candidates = [c for c in candidates if "error" not in c]
+
+    if not candidates:
+        suggested_contributor_id = None
+        confidence = 0.2
+        reason = (
+            "[MOCK AGENT] No contributor candidate matches this sender's "
+            "name or the transaction amount. This may be an unknown or "
+            "first-time contributor -- needs a human to confirm."
+        )
+    else:
+        top = candidates[0]
+        suggested_contributor_id = top["contributor_id"]
+        if top["amount_match"]:
+            confidence = max(top["name_similarity"], 0.6)
+            reason = (
+                f"[MOCK AGENT] Sender '{transaction.sender_name}' does not "
+                f"closely match contributor '{top['name']}' by name "
+                f"(similarity {top['name_similarity']:.2f}), but the amount "
+                f"matches {top['name']}'s expected contribution exactly -- "
+                "possible payment made on behalf of this contributor."
+            )
+        else:
+            confidence = top["name_similarity"]
+            reason = (
+                f"[MOCK AGENT] Closest candidate is '{top['name']}' "
+                f"(name similarity {top['name_similarity']:.2f}), but the "
+                "amount does not match their expected contribution -- not "
+                "confident enough to auto-confirm."
+            )
+
+    decision = ReconciliationDecision(
+        decision=ReconciliationDecisionType.NEEDS_HUMAN_REVIEW,
+        transaction_id=transaction_id,
+        suggested_contributor_id=suggested_contributor_id,
+        paid_by=transaction.sender_name,
+        reason=reason,
+        confidence=round(confidence, 2),
+    )
+
+    # Route through the same tool the real agent would call, so the
+    # application/service flow (and its side effects) are identical.
+    flag_for_review(
+        transaction_id=decision.transaction_id,
+        paid_by=decision.paid_by,
+        reason=decision.reason,
+        confidence=decision.confidence,
+        suggested_contributor_id=decision.suggested_contributor_id,
+    )
+    return decision
+
+
 def reconcile_transaction(collection_id: str, transaction_id: str) -> ReconciliationDecision:
     """Full reconciliation entry point for one transaction: deterministic
-    matching first, LLM reasoning only if the case is genuinely ambiguous."""
+    matching first, then either the mock agent or the real Bedrock-backed
+    agent (per `AGENT_MODE`) for genuinely ambiguous cases."""
     transaction = store.transactions.get(transaction_id)
     if transaction is None:
         raise ValueError(f"Unknown transaction: {transaction_id}")
@@ -123,4 +203,7 @@ def reconcile_transaction(collection_id: str, transaction_id: str) -> Reconcilia
         reconciliation_service.apply_decision(deterministic_decision)
         return deterministic_decision
 
+    settings = get_settings()
+    if settings.agent_mode == "mock":
+        return reconcile_transaction_with_mock_agent(collection_id, transaction_id)
     return reconcile_transaction_with_agent(collection_id, transaction_id)
