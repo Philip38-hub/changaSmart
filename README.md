@@ -251,7 +251,15 @@ cd backend
 pytest
 ```
 
-24 tests, all offline (no AWS calls) -- see `backend/README.md` for why.
+67 tests, all offline (no AWS calls) -- see `backend/README.md` for why.
+
+## Frontend (mobile UI)
+
+A Flutter app lives in `frontend/` -- create a project, track a Main
+Contribution and Harambee sessions, record payments, run reconciliation,
+resolve ambiguous cases, and generate WhatsApp updates, all against this
+backend. See `frontend/README.md` for how to run it (including testing on
+a physical Android phone on the same Wi-Fi network).
 
 ## AWS deployment
 

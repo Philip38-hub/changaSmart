@@ -1,0 +1,214 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../../models/models.dart';
+import '../../services/api_service.dart';
+import '../../utils/format.dart';
+import '../../widgets/async_data_view.dart';
+import '../../widgets/status_badge.dart';
+
+class ContributorsScreen extends StatefulWidget {
+  final ApiService api;
+  final String collectionId;
+
+  const ContributorsScreen({super.key, required this.api, required this.collectionId});
+
+  @override
+  State<ContributorsScreen> createState() => _ContributorsScreenState();
+}
+
+class _ContributorsScreenState extends State<ContributorsScreen> {
+  final _dataKey = GlobalKey<AsyncDataViewState<CollectionReport>>();
+
+  Future<CollectionReport> _load() => widget.api.getReport(widget.collectionId);
+
+  Future<void> _addContributor() async {
+    final added = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _AddContributorSheet(api: widget.api, collectionId: widget.collectionId),
+    );
+    if (added == true) _dataKey.currentState?.reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Expected Contributors')),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _addContributor,
+        icon: const Icon(Icons.add),
+        label: const Text('Add Contributor'),
+      ),
+      body: SafeArea(
+        child: AsyncDataView<CollectionReport>(
+          key: _dataKey,
+          loader: _load,
+          builder: (context, report, refresh) {
+            final entries = report.contributorBreakdown;
+            if (entries.isEmpty) {
+              return EmptyState(
+                icon: Icons.people_outline,
+                title: 'No contributors yet',
+                subtitle: 'Add who you expect to contribute to this collection.',
+                action: FilledButton.icon(
+                  onPressed: _addContributor,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Contributor'),
+                ),
+              );
+            }
+            return RefreshIndicator(
+              onRefresh: () async => refresh(),
+              child: ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                itemCount: entries.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (context, index) {
+                  final entry = entries[index];
+                  return Card(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(entry.name, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                                const SizedBox(height: 4),
+                                Text(
+                                  entry.expectedAmount != null
+                                      ? '${formatKsh(entry.totalPaid)} of ${formatKsh(entry.expectedAmount!)}'
+                                      : formatKsh(entry.totalPaid),
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                              ],
+                            ),
+                          ),
+                          StatusBadge.contributorPaid(entry.hasPaid),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _AddContributorSheet extends StatefulWidget {
+  final ApiService api;
+  final String collectionId;
+
+  const _AddContributorSheet({required this.api, required this.collectionId});
+
+  @override
+  State<_AddContributorSheet> createState() => _AddContributorSheetState();
+}
+
+class _AddContributorSheetState extends State<_AddContributorSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _amountController = TextEditingController();
+  final _phoneController = TextEditingController();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _amountController.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _submitting = true);
+    try {
+      final amountText = _amountController.text.trim().replaceAll(',', '');
+      await widget.api.createContributor(
+        collectionId: widget.collectionId,
+        name: _nameController.text.trim(),
+        expectedAmount: amountText.isEmpty ? null : int.parse(amountText),
+        phone: _phoneController.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(context, e);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Add Contributor', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _nameController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Name'),
+              autofocus: true,
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'Name is required' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _amountController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(labelText: 'Expected amount (optional)', prefixText: 'KSh '),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return null;
+                final parsed = int.tryParse(v.replaceAll(',', ''));
+                if (parsed == null) return 'Enter a whole number';
+                if (parsed < 0) return 'Cannot be negative';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(labelText: 'Phone (optional)', hintText: '2547XXXXXXXX'),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _submitting ? null : _submit,
+                child: _submitting
+                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Add Contributor'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
