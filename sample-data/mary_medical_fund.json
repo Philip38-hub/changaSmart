@@ -1,0 +1,181 @@
+{
+  "_comment": "Fictional demo data for ChangaSmart. All names are made up for illustration only -- no real person's data is used.",
+  "project": {
+    "name": "Mary's Medical Fund",
+    "target_amount": 200000
+  },
+  "collections": [
+    {
+      "key": "main",
+      "type": "MAIN",
+      "name": "Main Contribution",
+      "target_amount": 200000,
+      "contributors": [
+        { "key": "john", "name": "John Kamau", "expected_amount": 10000, "phone": "254711000001" },
+        { "key": "jane", "name": "Jane Wanjiku", "expected_amount": 3000, "phone": "254711000002" },
+        { "key": "peter", "name": "Peter Otieno", "expected_amount": 5000, "phone": "254711000003" },
+        { "key": "mary_a", "name": "Mary Akinyi", "expected_amount": 15000, "phone": "254711000004" },
+        { "key": "david", "name": "David Mwangi", "expected_amount": 8000, "phone": "254711000005" }
+      ],
+      "transactions": [
+        {
+          "scenario": "1. Exact name match",
+          "mpesa_code": "QAX1AAA111",
+          "sender_name": "John Kamau",
+          "sender_phone": "254711000001",
+          "amount": 10000,
+          "timestamp": "2026-08-20T09:12:00Z",
+          "raw_message": "QAX1AAA111 Confirmed. You have received Ksh10,000.00 from John Kamau 254711000001 on 20/8/26 at 9:12 AM."
+        },
+        {
+          "scenario": "2. Different formatting of the same name (all caps, extra punctuation)",
+          "mpesa_code": "QAX1BBB222",
+          "sender_name": "JANE  WANJIKU.",
+          "sender_phone": "254711000002",
+          "amount": 3000,
+          "timestamp": "2026-08-20T10:05:00Z",
+          "raw_message": "QAX1BBB222 Confirmed. You have received Ksh3,000.00 from JANE  WANJIKU. 254711000002 on 20/8/26 at 10:05 AM."
+        },
+        {
+          "scenario": "3. Amount match corroborating a near-exact (typo'd) name",
+          "mpesa_code": "QAX1CCC333",
+          "sender_name": "Peter Otieno",
+          "sender_phone": "254711000003",
+          "amount": 5000,
+          "timestamp": "2026-08-20T11:20:00Z",
+          "raw_message": "QAX1CCC333 Confirmed. You have received Ksh5,000.00 from Peter Otieno 254711000003 on 20/8/26 at 11:20 AM."
+        },
+        {
+          "scenario": "4. Name mismatch -- amount doesn't match anyone either",
+          "mpesa_code": "QAX1DDD444",
+          "sender_name": "Grace Njeri",
+          "sender_phone": "254711000099",
+          "amount": 750,
+          "timestamp": "2026-08-20T12:00:00Z",
+          "raw_message": "QAX1DDD444 Confirmed. You have received Ksh750.00 from Grace Njeri 254711000099 on 20/8/26 at 12:00 PM."
+        },
+        {
+          "scenario": "5. Payment on behalf of another contributor (THE canonical ambiguous case)",
+          "mpesa_code": "QAX1EEE555",
+          "sender_name": "Anne Otieno",
+          "sender_phone": "254711000077",
+          "amount": 3000,
+          "timestamp": "2026-08-20T13:40:00Z",
+          "raw_message": "QAX1EEE555 Confirmed. You have received Ksh3,000.00 from Anne Otieno 254711000077 on 20/8/26 at 1:40 PM."
+        },
+        {
+          "scenario": "6a. Original transaction (will be duplicated below)",
+          "mpesa_code": "QAX1FFF666",
+          "sender_name": "David Mwangi",
+          "sender_phone": "254711000005",
+          "amount": 8000,
+          "timestamp": "2026-08-20T14:15:00Z",
+          "raw_message": "QAX1FFF666 Confirmed. You have received Ksh8,000.00 from David Mwangi 254711000005 on 20/8/26 at 2:15 PM."
+        },
+        {
+          "scenario": "6b. Duplicate of QAX1FFF666 -- e.g. re-forwarded SMS -- must be ignored, not double-counted",
+          "mpesa_code": "QAX1FFF666",
+          "sender_name": "David Mwangi",
+          "sender_phone": "254711000005",
+          "amount": 8000,
+          "timestamp": "2026-08-20T14:15:00Z",
+          "raw_message": "QAX1FFF666 Confirmed. You have received Ksh8,000.00 from David Mwangi 254711000005 on 20/8/26 at 2:15 PM."
+        },
+        {
+          "scenario": "7. Unknown sender, no plausible contributor at all",
+          "mpesa_code": "QAX1GGG777",
+          "sender_name": "Unknown Sender 0722XXXXXX",
+          "sender_phone": null,
+          "amount": 200,
+          "timestamp": "2026-08-20T15:00:00Z",
+          "raw_message": "QAX1GGG777 Confirmed. You have received Ksh200.00 from 0722XXXXXX on 20/8/26 at 3:00 PM."
+        }
+      ]
+    },
+    {
+      "key": "harambee_1",
+      "type": "HARAMBEE",
+      "name": "Harambee #1 -- Hospital Bill Push",
+      "target_amount": 50000,
+      "date": "2026-09-03",
+      "contributors": [
+        { "key": "h1_john", "name": "John Kamau" },
+        { "key": "h1_mary", "name": "Mary Akinyi" },
+        { "key": "h1_peter", "name": "Peter Otieno" },
+        { "key": "h1_jane", "name": "Jane Wanjiku" }
+      ],
+      "transactions": [
+        {
+          "scenario": "8. Harambee contribution",
+          "mpesa_code": "QAX2AAA111",
+          "sender_name": "John Kamau",
+          "amount": 20000,
+          "timestamp": "2026-09-03T08:30:00Z",
+          "raw_message": "QAX2AAA111 Confirmed. You have received Ksh20,000.00 from John Kamau on 3/9/26 at 8:30 AM."
+        },
+        {
+          "scenario": "8. Harambee contribution",
+          "mpesa_code": "QAX2BBB222",
+          "sender_name": "Mary Akinyi",
+          "amount": 15000,
+          "timestamp": "2026-09-03T09:10:00Z",
+          "raw_message": "QAX2BBB222 Confirmed. You have received Ksh15,000.00 from Mary Akinyi on 3/9/26 at 9:10 AM."
+        },
+        {
+          "scenario": "8. Harambee contribution",
+          "mpesa_code": "QAX2CCC333",
+          "sender_name": "Peter Otieno",
+          "amount": 4000,
+          "timestamp": "2026-09-03T10:00:00Z",
+          "raw_message": "QAX2CCC333 Confirmed. You have received Ksh4,000.00 from Peter Otieno on 3/9/26 at 10:00 AM."
+        },
+        {
+          "scenario": "8. Harambee contribution",
+          "mpesa_code": "QAX2DDD444",
+          "sender_name": "Jane Wanjiku",
+          "amount": 3000,
+          "timestamp": "2026-09-03T10:45:00Z",
+          "raw_message": "QAX2DDD444 Confirmed. You have received Ksh3,000.00 from Jane Wanjiku on 3/9/26 at 10:45 AM."
+        }
+      ]
+    },
+    {
+      "key": "harambee_2",
+      "type": "HARAMBEE",
+      "name": "Harambee #2 -- Follow-up Treatment",
+      "target_amount": 30000,
+      "date": "2026-09-10",
+      "contributors": [
+        { "key": "h2_david", "name": "David Mwangi" }
+      ],
+      "transactions": [
+        {
+          "scenario": "9. Second Harambee session under the same project",
+          "mpesa_code": "QAX3AAA111",
+          "sender_name": "David Mwangi",
+          "amount": 8000,
+          "timestamp": "2026-09-10T08:00:00Z",
+          "raw_message": "QAX3AAA111 Confirmed. You have received Ksh8,000.00 from David Mwangi on 10/9/26 at 8:00 AM."
+        }
+      ]
+    },
+    {
+      "key": "harambee_3",
+      "type": "HARAMBEE",
+      "name": "Harambee #3 -- Discharge Push",
+      "target_amount": 25000,
+      "date": "2026-09-17",
+      "contributors": [],
+      "transactions": [
+        {
+          "scenario": "9. Third Harambee session, still empty (target not yet met)",
+          "mpesa_code": "QAX4AAA111",
+          "sender_name": "Well Wisher",
+          "amount": 1000,
+          "timestamp": "2026-09-17T08:00:00Z",
+          "raw_message": "QAX4AAA111 Confirmed. You have received Ksh1,000.00 from Well Wisher on 17/9/26 at 8:00 AM."
+        }
+      ]
+    }
+  ]
+}

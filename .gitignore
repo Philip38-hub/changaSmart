@@ -1,0 +1,29 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# AWS SAM
+.aws-sam/
+samconfig.toml.bak
+
+# Build artifacts
+build/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log

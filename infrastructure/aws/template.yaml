@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ChangaSmart -- hackathon scaffold.
+  API Gateway (HTTP API) -> Lambda (FastAPI via Mangum) -> Strands Agent -> Amazon Bedrock.
+  Deliberately minimal: no DynamoDB, no VPC, no custom domain. In-memory
+  storage inside the Lambda function only -- state does not persist across
+  cold starts. Good enough to demo the reconciliation architecture; a
+  persistent store (e.g. DynamoDB) is a follow-up, not part of this scaffold.
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: amazon.nova-micro-v1:0
+    Description: Bedrock model id the agent will call.
+  Stage:
+    Type: String
+    Default: dev
+    Description: API Gateway stage name.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 512
+    Tracing: Active
+
+Resources:
+  ChangaSmartFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub changasmart-${Stage}
+      CodeUri: ../../backend
+      Handler: app.lambda_handler.handler
+      Environment:
+        Variables:
+          # AWS_REGION is set automatically by the Lambda runtime and must
+          # not be set explicitly here.
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        # Scoped to exactly the model this function is configured to call
+        # -- not a wildcard bedrock:* grant.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
+      # CloudWatch Logs permissions are granted automatically to every SAM
+      # function's execution role; no extra policy needed for basic logging.
+      Events:
+        ProxyRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ChangaSmartHttpApi
+            Path: /
+            Method: ANY
+        ProxyAny:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ChangaSmartHttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+  ChangaSmartHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+
+  ChangaSmartLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/changasmart-${Stage}
+      RetentionInDays: 14
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the ChangaSmart API.
+    Value: !Sub https://${ChangaSmartHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/
+  FunctionName:
+    Value: !Ref ChangaSmartFunction

@@ -1,0 +1,217 @@
+"""FastAPI application for ChangaSmart.
+
+Thin HTTP layer only: routes validate input and delegate to services / the
+agent. No business logic or reconciliation reasoning lives here.
+
+Request flow for the interesting case:
+    HTTP POST /collections/{id}/reconcile
+        -> app.agent.reconcile_transaction (deterministic first, agent for
+           ambiguous cases)
+        -> app.services.reconciliation (scoring, decision application)
+        -> app.tools.* (what the agent itself calls)
+        -> app.repositories.memory (storage)
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+from app.agent import reconcile_transaction
+from app.models import (
+    Collection,
+    CollectionReport,
+    CollectionType,
+    Contributor,
+    HumanReviewAction,
+    HumanReviewResolution,
+    Project,
+    Transaction,
+    TransactionCandidate,
+    TransactionStatus,
+)
+from app.repositories.memory import store
+from app.services import reconciliation as reconciliation_service
+from app.services import setup as setup_service
+from app.services import whatsapp as whatsapp_service
+from app.services.reporting import generate_collection_report as build_report
+
+app = FastAPI(
+    title="ChangaSmart",
+    version="0.1.0",
+    description=(
+        "AI-assisted contribution reconciliation for temporary Kenyan "
+        "fundraising projects. Prototype only -- not an M-PESA banking or "
+        "payment service."
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Request DTOs (wire-level only; domain models live in app.models)
+# ---------------------------------------------------------------------------
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+    target_amount: int | None = None
+
+
+class CollectionCreateRequest(BaseModel):
+    type: CollectionType
+    name: str
+    target_amount: int | None = None
+    date: dt.date | None = None
+
+
+class ContributorCreateRequest(BaseModel):
+    name: str
+    expected_amount: int | None = None
+    phone: str | None = None
+
+
+class ReviewResolutionRequest(BaseModel):
+    action: HumanReviewAction
+    contributor_id: str | None = None
+    new_contributor_name: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.post("/projects", response_model=Project)
+def create_project(payload: ProjectCreateRequest) -> Project:
+    return setup_service.create_project(payload.name, payload.target_amount)
+
+
+@app.get("/projects/{project_id}", response_model=Project)
+def get_project_endpoint(project_id: str) -> Project:
+    project = store.projects.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+@app.post("/projects/{project_id}/collections", response_model=Collection)
+def create_collection(project_id: str, payload: CollectionCreateRequest) -> Collection:
+    if store.projects.get(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return setup_service.create_collection(
+        project_id=project_id,
+        type=payload.type,
+        name=payload.name,
+        target_amount=payload.target_amount,
+        date=payload.date,
+    )
+
+
+@app.post("/collections/{collection_id}/contributors", response_model=Contributor)
+def create_contributor(
+    collection_id: str, payload: ContributorCreateRequest
+) -> Contributor:
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return setup_service.create_contributor(
+        collection_id=collection_id,
+        name=payload.name,
+        expected_amount=payload.expected_amount,
+        phone=payload.phone,
+    )
+
+
+@app.post("/collections/{collection_id}/transactions", response_model=Transaction)
+def create_transaction(
+    collection_id: str, payload: TransactionCandidate
+) -> Transaction:
+    """Accepts a structured transaction candidate -- as would be produced
+    by the mobile app's local SMS parser. Never accepts raw SMS text as
+    the primary payload."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return reconciliation_service.create_transaction(collection_id, payload)
+
+
+@app.post("/collections/{collection_id}/reconcile")
+def reconcile_collection(collection_id: str) -> list[dict]:
+    """Reconcile every PENDING transaction in a collection. Deterministic
+    matches are resolved instantly, with no LLM call at all. Ambiguous
+    transactions go through the Strands agent; if the agent call itself
+    fails (e.g. Bedrock access/credentials not yet available), that
+    transaction is reported as an error rather than failing the whole
+    batch, and is left PENDING for a retry."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    pending = [
+        t
+        for t in store.transactions.list_by_collection(collection_id)
+        if t.status == TransactionStatus.PENDING
+    ]
+
+    results: list[dict] = []
+    for transaction in pending:
+        try:
+            decision = reconcile_transaction(collection_id, transaction.id)
+            results.append(decision.model_dump(mode="json"))
+        except Exception as exc:  # noqa: BLE001 -- surfaced to the caller, not swallowed
+            results.append(
+                {
+                    "transaction_id": transaction.id,
+                    "decision": "ERROR",
+                    "error": str(exc),
+                }
+            )
+    return results
+
+
+@app.post("/transactions/{transaction_id}/resolve-review", response_model=Transaction)
+def resolve_review(
+    transaction_id: str, payload: ReviewResolutionRequest
+) -> Transaction:
+    """Apply a human's authoritative decision on a flagged transaction:
+    credit the suggested contributor, credit the sender as a new
+    contributor, or ignore the transaction entirely."""
+    if store.transactions.get(transaction_id) is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    resolution = HumanReviewResolution(
+        transaction_id=transaction_id,
+        action=payload.action,
+        contributor_id=payload.contributor_id,
+        new_contributor_name=payload.new_contributor_name,
+    )
+    return reconciliation_service.apply_human_review_resolution(resolution)
+
+
+@app.get("/collections/{collection_id}/report", response_model=CollectionReport)
+def get_report(collection_id: str) -> CollectionReport:
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return build_report(collection_id)
+
+
+@app.get("/collections/{collection_id}/whatsapp/{kind}")
+def get_whatsapp_text(collection_id: str, kind: str) -> dict:
+    """kind: one of full | paid | pending | review | harambee"""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    generators = {
+        "full": whatsapp_service.full_contribution_update,
+        "paid": whatsapp_service.paid_list,
+        "pending": whatsapp_service.pending_list,
+        "review": whatsapp_service.review_list,
+        "harambee": whatsapp_service.harambee_progress_update,
+    }
+    generator = generators.get(kind)
+    if generator is None:
+        raise HTTPException(status_code=404, detail=f"Unknown report kind: {kind}")
+    return {"text": generator(collection_id)}
