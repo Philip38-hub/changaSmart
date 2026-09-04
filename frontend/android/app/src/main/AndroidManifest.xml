@@ -1,5 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Read-only access to the SMS inbox that already exists on the
+         device, so the M-PESA Inbox screen can browse existing messages.
+         Deliberately NOT requesting RECEIVE_SMS or SEND_SMS: live or
+         background SMS monitoring is an explicit non-goal for this
+         milestone (see frontend/lib/screens/mpesa_inbox/). -->
+    <uses-permission android:name="android.permission.READ_SMS" />
     <application
         android:label="changasmart"
         android:name="${applicationName}"

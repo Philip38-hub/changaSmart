@@ -108,6 +108,40 @@ python sample-data/seed.py
 
 Then pull-to-refresh the Home screen on your phone to see it.
 
+### 6. Test the M-PESA Inbox with your phone's real SMS
+
+This is the one part of the app that genuinely needs a **physical Android
+phone** — the emulator has no real SMS history, so it will correctly show
+an empty inbox there (see "Demo Data vs. Phone SMS" below).
+
+1. Open a project → a collection → **M-PESA Inbox**.
+2. Grant SMS permission when prompted (read-only; the app never sends or
+   monitors SMS -- see Privacy below).
+3. Your phone's existing M-PESA messages appear immediately, newest
+   first -- no need to wait for a new SMS.
+4. Scroll through them.
+5. Tap one to see the **raw SMS** (kept on-device only) alongside what was
+   parsed from it.
+6. Tap **Select**, choose one or more "Not imported" messages (already-
+   imported ones and unparsed ones can't be selected).
+7. Tap **Import Selected**, review the preview, confirm.
+8. You land on the existing reconciliation result screen -- exact matches
+   confirm automatically, ambiguous ones need your review, exactly as with
+   manually recorded payments.
+9. Re-open the M-PESA Inbox: the messages you just imported now show
+   **Already imported** and can't be selected again -- try importing the
+   same message twice to confirm it's a no-op.
+
+### Demo Data vs. Phone SMS
+
+Everything else in this app (projects, contributors, sample data) is
+**Demo Data** -- it works identically on an emulator or a phone, backed by
+the mock/demo backend. The **M-PESA Inbox** is different: it reads
+**Phone SMS**, a real, per-device data source that only a physical Android
+phone has. On an emulator (or a phone with no M-PESA messages yet) it
+correctly shows "No phone SMS available" rather than any fabricated data
+-- the app never invents SMS to make the screen look populated.
+
 ## Troubleshooting
 
 **"Unable to load projects" / "Could not reach the backend at http://..."**
@@ -144,6 +178,26 @@ install.
   and dependencies are installed (`pip install -r requirements.txt`).
 - Check the terminal running uvicorn for a Python traceback.
 
+**M-PESA Inbox shows "No phone SMS available"**:
+- Expected on an emulator or a phone with no M-PESA messages -- this is
+  the correct empty state, not an error (see "Demo Data vs. Phone SMS"
+  above).
+- On a phone that *does* have M-PESA messages: confirm you tapped **Grant
+  SMS Permission** and chose "Allow" on the system dialog, then tap
+  **Refresh**.
+
+**SMS permission dialog says "send and view SMS messages"**:
+- That's Android's fixed, generic wording for the whole SMS permission
+  group -- it does not mean the app can send SMS. Only `READ_SMS` is
+  declared in `AndroidManifest.xml`; Android only ever grants what's
+  declared there, regardless of the dialog's wording.
+
+**Permission permanently denied**:
+- If you previously tapped "Don't allow" and checked "Don't ask again" (or
+  denied twice), Android stops showing the prompt. The screen shows an
+  **Open Settings** button instead -- tap it, then enable SMS permission
+  manually under App info → Permissions.
+
 **Phone cannot reach computer at all** (tried everything above):
 - As a fallback, use the Android *emulator* instead of a physical phone —
   it doesn't need any network configuration:
@@ -156,6 +210,38 @@ install.
   is also `API_BASE_URL`'s default if you omit `--dart-define` entirely,
   so `flutter run` with no arguments targets an emulator out of the box.
 
+## Privacy: the M-PESA Inbox
+
+The SMS inbox contains sensitive personal messages, so this feature is
+built with a strict one-way boundary:
+
+```
+Phone SMS inbox
+      ↓ (flutter_sms_inbox -- reads the existing inbox, once, on demand)
+MpesaSmsParser (100% local, pure Dart, no platform/network calls)
+      ↓ (only for messages the user explicitly selects)
+Structured transaction candidate (code, sender, amount, phone, timestamp)
+      ↓
+POST /collections/{id}/transactions  (existing backend endpoint)
+```
+
+Concretely:
+
+- Only `READ_SMS` is requested -- no `RECEIVE_SMS`, `SEND_SMS`, contacts,
+  call log, location, camera, or microphone permissions.
+- No live/background SMS listening: the inbox is read once when the
+  screen opens or **Refresh** is tapped, never polled.
+- The raw SMS body is never logged, never printed to debug output, and
+  never sent anywhere -- `POST /collections/{id}/transactions` only ever
+  receives the parsed fields (`raw_message` is left unset). The raw text
+  is shown only in an on-device detail sheet (tap a message to see it).
+- Messages that aren't M-PESA at all, or are M-PESA but not an incoming
+  payment (airtime, withdrawals, balance checks, promotional, ...), are
+  filtered out locally and never reach the rest of the app.
+- The backend/agent (including Bedrock, in `AGENT_MODE=bedrock`) never
+  sees SMS content -- only the same structured fields manual "Record
+  Payment" entry already produces.
+
 ## Architecture
 
 ```
@@ -163,9 +249,12 @@ lib/
 ├── main.dart                 App entry point, theme, ApiService wiring
 ├── config/api_config.dart    API_BASE_URL (from --dart-define)
 ├── models/                   Plain Dart classes mirroring backend/app/models.py
+│   └── mpesa_sms.dart        Local-only: a classified SMS (see Privacy above)
 ├── services/
 │   ├── api_service.dart      One method per backend endpoint
-│   └── project_summary.dart  Aggregates a project's collections for display
+│   ├── project_summary.dart  Aggregates a project's collections for display
+│   ├── mpesa_sms_parser.dart Local M-PESA detector/parser (pure Dart, unit-tested)
+│   └── sms_inbox_service.dart  Reads the device SMS inbox + permission state
 ├── theme/app_theme.dart      Material 3 theme, status colors
 ├── utils/format.dart         KSh formatting, dates
 ├── widgets/
@@ -180,6 +269,7 @@ lib/
     ├── collection/           Collection detail (Main or Harambee), create collection
     ├── contributors/         Contributor list + add
     ├── transactions/         Transaction list + record payment, reconciliation result
+    ├── mpesa_inbox/          Browse existing phone SMS, select, import (see Privacy above)
     ├── review/                Persistent "needs review" screen
     └── report/               Contribution summary / Harambee summary
 ```

@@ -9,6 +9,7 @@ import '../../widgets/progress_summary.dart';
 import '../../widgets/status_badge.dart';
 import '../../widgets/whatsapp_sheet.dart';
 import '../contributors/contributors_screen.dart';
+import '../mpesa_inbox/mpesa_inbox_screen.dart';
 import '../report/report_screen.dart';
 import '../review/review_screen.dart';
 import '../transactions/reconciliation_result_screen.dart';
@@ -206,6 +207,11 @@ class _CollectionScreenState extends State<CollectionScreen> {
                     icon: Icons.receipt_long_outlined,
                     label: 'Transactions',
                     onTap: () => _push(TransactionsScreen(api: widget.api, collectionId: widget.collectionId)),
+                  ),
+                  _ActionTile(
+                    icon: Icons.sms_outlined,
+                    label: 'M-PESA Inbox',
+                    onTap: () => _push(MpesaInboxScreen(api: widget.api, collectionId: widget.collectionId)),
                   ),
                   if (report.pendingReviewCount > 0)
                     _ActionTile(
