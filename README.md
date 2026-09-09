@@ -58,7 +58,7 @@ flowchart LR
     Svc -->|exact match| Confirmed[Transaction CONFIRMED]
     Svc -->|ambiguous| Agent[Strands Agent]
     Agent --> Tools[Agent tools]
-    Tools --> Repo[(In-memory repository)]
+    Tools --> Repo[(SQLite / DynamoDB)]
     Agent --> Bedrock[Amazon Bedrock\nNova Micro]
     Agent -->|flag_for_review| Review[NEEDS_HUMAN_REVIEW]
     Review --> Human[Human review: credit / ignore]
@@ -79,7 +79,7 @@ HTTP request
             -> app/tools/*    (get_project, get_contributors, get_transactions,
                                 find_contributor_candidates, record_contribution,
                                 flag_for_review, generate_collection_report)
-            -> app/repositories/memory.py   (storage)
+            -> app/repositories/store.py   (SQLite locally, DynamoDB on Lambda)
   -> structured ReconciliationDecision
 ```
 
@@ -167,7 +167,7 @@ text) works with no AWS credentials regardless.
 A `Makefile` at the repo root wraps the common commands:
 
 ```bash
-make test               # pytest -q (offline, 91 tests)
+make test               # pytest -q (offline, 117 tests)
 make run                # uvicorn app.main:app --reload
 make seed               # seed sample data into a running local API
 make sam-validate       # sam validate --lint
@@ -208,7 +208,9 @@ Set in `.env` (see `.env.example`):
 |---|---|---|
 | `AWS_REGION` | `us-east-1` | Bedrock region (auto-set by Lambda in prod) |
 | `BEDROCK_MODEL_ID` | `amazon.nova-micro-v1:0` | Model the agent calls -- configurable, not hard-coded (also drives the Lambda's IAM policy resource ARN, see `infrastructure/aws/template.yaml`) |
-| `DATABASE_PATH` | `changasmart.db` | SQLite file the app persists to (see "Storage" below) |
+| `DATABASE_PATH` | `changasmart.db` | SQLite file the app persists to locally (ignored when `STORAGE_BACKEND=dynamodb`) |
+| `STORAGE_BACKEND` | `sqlite` | `sqlite` for local dev, `dynamodb` for Lambda (set automatically by `infrastructure/aws/template.yaml` -- a Lambda container's filesystem doesn't survive between invocations, so SQLite can't be used there) |
+| `DYNAMODB_TABLE_PREFIX` | `changasmart` | Table name prefix when `STORAGE_BACKEND=dynamodb` (see `app/repositories/dynamodb.py`) |
 
 No credentials are hard-coded anywhere -- boto3's standard credential
 resolution chain is used (`aws configure`, environment variables, or an
@@ -227,7 +229,7 @@ a clear error rather than crashing the request or silently mismatching.
 
 ### Local/live Bedrock validation
 
-* **Automated tests** (`pytest`, all 91 tests): fully offline, zero AWS
+* **Automated tests** (`pytest`, all 117 tests): fully offline, zero AWS
   dependency, zero cost -- the one function that would call Bedrock is
   stubbed with a deterministic policy equivalent (see "Where Bedrock fits"
   above), so routing and the review/apply flow are still fully exercised.
@@ -248,7 +250,7 @@ cd backend
 pytest
 ```
 
-91 tests, all offline (no AWS calls) -- see `backend/README.md` for why.
+117 tests, all offline (no AWS calls) -- see `backend/README.md` for why.
 
 ## Frontend (mobile UI)
 
@@ -267,31 +269,18 @@ sam deploy
 ```
 
 See `infrastructure/aws/README.md` for details on what gets created (one
-Lambda, one API Gateway HTTP API, one scoped Bedrock IAM policy, one log
-group -- deliberately no DynamoDB, no VPC).
+Lambda, one API Gateway HTTP API, four pay-per-request DynamoDB tables,
+one scoped Bedrock IAM policy, one log group -- deliberately no VPC, no
+custom domain).
 
 ## Current limitations
 
-* **Local dev storage persists; Lambda's does not.** `app/repositories/store.py`
-  is backed by SQLite (`DATABASE_PATH`, default `changasmart.db`) -- when
-  you run `uvicorn app.main:app` locally, data survives a restart of that
-  process. Deployed to Lambda (or `sam local start-api`), it does not:
-  Lambda's filesystem is ephemeral per container, and **verified via
-  `sam local start-api`, each separate HTTP request there gets its own
-  fresh container**, so a SQLite file written there is gone before the
-  next request arrives -- this isn't only a cold-start edge case, it's the
-  default local behavior, and real deployed Lambda has no guarantee of
-  container reuse either. **Practical effect: point a frontend at the
-  plain `uvicorn` dev server for real multi-session use, not at
-  `sam local start-api` or the deployed Lambda, until a Lambda-durable
-  store (e.g. DynamoDB, or SQLite on EFS) replaces the local file.** Tests
-  never touch this file at all -- see `tests/conftest.py`, which forces an
-  in-memory SQLite connection and then replaces its repositories outright.
 * **No authentication.** Anyone who can reach the API can call any
   endpoint.
-* **No real SMS/WhatsApp/M-PESA integration.** All transaction input is
-  structured JSON (see `TransactionCandidate` in `app/models.py`) -- the
-  scaffold assumes something upstream has already parsed the SMS.
+* **No automatic WhatsApp/M-PESA posting.** The M-PESA Inbox parses a
+  phone's real SMS inbox on-device (see `frontend/lib/services/mpesa_sms_parser.dart`)
+  and WhatsApp update text is generated correctly, but nothing posts to
+  WhatsApp automatically -- it's meant to be copy/pasted.
 * **Single-tenant.** No user accounts or multi-project isolation beyond
   project ids.
 
@@ -311,11 +300,6 @@ Android SMS
 
 Planned, not built yet:
 
-* A Lambda-durable store (e.g. DynamoDB, or SQLite on EFS) replacing the
-  local SQLite file for the deployed API -- the `app/repositories/base.py`
-  interfaces exist specifically so this swap doesn't touch the agent,
-  tools, or routes (the same interfaces already absorbed the in-memory ->
-  SQLite swap with zero changes elsewhere).
 * WhatsApp Business API integration (currently: deterministic text
   generation only, meant to be copy/pasted).
 * Authentication and per-project access control.

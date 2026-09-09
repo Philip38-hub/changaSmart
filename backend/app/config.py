@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # the app is launched from (typically backend/).
     database_path: str = "changasmart.db"
 
+    # Which persistence backend app.repositories.store builds: "sqlite"
+    # (default, for local dev -- a plain uvicorn process's filesystem
+    # survives a restart) or "dynamodb" (for Lambda, whose filesystem does
+    # not -- see infrastructure/aws/template.yaml, which sets this via
+    # env var). dynamodb_table_prefix is only used for the latter.
+    storage_backend: str = "sqlite"
+    dynamodb_table_prefix: str = "changasmart"
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -3,10 +3,12 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   ChangaSmart -- hackathon scaffold.
   API Gateway (HTTP API) -> Lambda (FastAPI via Mangum) -> Strands Agent -> Amazon Bedrock.
-  Deliberately minimal: no DynamoDB, no VPC, no custom domain. In-memory
-  storage inside the Lambda function only -- state does not persist across
-  cold starts. Good enough to demo the reconciliation architecture; a
-  persistent store (e.g. DynamoDB) is a follow-up, not part of this scaffold.
+  Persisted to four pay-per-request DynamoDB tables (Projects, Collections,
+  Contributors, Transactions) -- a Lambda container's filesystem does not
+  survive between invocations, so the local SQLite file
+  (app.repositories.sqlite) can't be used here; app.repositories.dynamodb
+  is the equivalent backend for this deployment. Deliberately still
+  minimal otherwise: no VPC, no custom domain, no authentication.
 
 Parameters:
   BedrockModelId:
@@ -37,6 +39,9 @@ Resources:
           # AWS_REGION is set automatically by the Lambda runtime and must
           # not be set explicitly here.
           BEDROCK_MODEL_ID: !Ref BedrockModelId
+          STORAGE_BACKEND: dynamodb
+          DYNAMODB_TABLE_PREFIX: !Sub changasmart-${Stage}
+          API_GATEWAY_BASE_PATH: !Sub /${Stage}
       Policies:
         # Scoped to exactly the model this function is configured to call
         # -- not a wildcard bedrock:* grant.
@@ -47,6 +52,24 @@ Resources:
                 - bedrock:InvokeModelWithResponseStream
               Resource:
                 - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
+        # Scoped to exactly this stage's four tables (and their indexes)
+        # -- not a wildcard dynamodb:* grant.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - !GetAtt ProjectsTable.Arn
+                - !Sub ${ProjectsTable.Arn}/index/*
+                - !GetAtt CollectionsTable.Arn
+                - !Sub ${CollectionsTable.Arn}/index/*
+                - !GetAtt ContributorsTable.Arn
+                - !Sub ${ContributorsTable.Arn}/index/*
+                - !GetAtt TransactionsTable.Arn
+                - !Sub ${TransactionsTable.Arn}/index/*
       # CloudWatch Logs permissions are granted automatically to every SAM
       # function's execution role; no extra policy needed for basic logging.
       Events:
@@ -73,6 +96,96 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/changasmart-${Stage}
       RetentionInDays: 14
+
+  # Four tables mirroring app.repositories.sqlite's schema exactly: a
+  # primary key of `id`, plus one GSI per parent-lookup the app actually
+  # needs (list-by-parent, find-by-mpesa-code) -- see
+  # app/repositories/dynamodb.py. Pay-per-request: no capacity planning
+  # for a hackathon-scale app, and idle cost is $0.
+  ProjectsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub changasmart-${Stage}-projects
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  CollectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub changasmart-${Stage}-collections
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: project_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: project_id-index
+          KeySchema:
+            - AttributeName: project_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  ContributorsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub changasmart-${Stage}-contributors
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: collection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: collection_id-index
+          KeySchema:
+            - AttributeName: collection_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub changasmart-${Stage}-transactions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: collection_id
+          AttributeType: S
+        - AttributeName: mpesa_code
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: collection_id-index
+          KeySchema:
+            - AttributeName: collection_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: collection_id-mpesa_code-index
+          KeySchema:
+            - AttributeName: collection_id
+              KeyType: HASH
+            - AttributeName: mpesa_code
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
 
 Outputs:
   ApiUrl:
