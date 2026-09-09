@@ -9,7 +9,7 @@ Request flow for the interesting case:
            ambiguous cases)
         -> app.services.reconciliation (scoring, decision application)
         -> app.tools.* (what the agent itself calls)
-        -> app.repositories.memory (storage)
+        -> app.repositories.store (storage)
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from app.models import (
     TransactionStatus,
     WeeklyCollectionReport,
 )
-from app.repositories.memory import store
+from app.repositories.store import store
 from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.services import whatsapp as whatsapp_service
