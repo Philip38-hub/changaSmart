@@ -9,7 +9,9 @@ proposes) -- it never computes these values itself.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
+import uuid
 from difflib import SequenceMatcher
 
 from app.models import (
@@ -23,7 +25,7 @@ from app.models import (
     TransactionCandidate,
     TransactionStatus,
 )
-from app.repositories.memory import store
+from app.repositories.store import store
 
 # A near-exact name match, combined with a consistent (or absent) expected
 # amount, is trusted enough to auto-confirm without involving the LLM.
@@ -145,6 +147,35 @@ def try_deterministic_match(
                 confidence=1.0,
             )
     return None
+
+
+def record_manual_contribution(
+    collection_id: str, contributor_id: str, amount: int, timestamp: dt.datetime
+) -> Transaction:
+    """Record a historical/manual contribution directly against a known
+    contributor -- no M-PESA message behind it (e.g. backfilling a group's
+    pre-existing weekly tracker). A synthetic, always-unique mpesa_code is
+    used instead of forking the Transaction model or its uniqueness rule.
+    There is no ambiguity to resolve here -- a human is directly naming the
+    contributor -- so this bypasses build_candidates/reconciliation
+    entirely and confirms immediately."""
+    contributor = store.contributors.get(contributor_id)
+    if contributor is None:
+        raise ValueError(f"Unknown contributor: {contributor_id}")
+
+    transaction = Transaction(
+        collection_id=collection_id,
+        mpesa_code=f"MANUAL-{uuid.uuid4().hex[:10]}",
+        sender_name=contributor.name,
+        amount=amount,
+        timestamp=timestamp,
+        status=TransactionStatus.CONFIRMED,
+        matched_contributor_id=contributor.id,
+        paid_by_name=contributor.name,
+        confidence=1.0,
+        review_reason="Manually recorded historical contribution.",
+    )
+    return store.transactions.create(transaction)
 
 
 def create_transaction(

@@ -6,3 +6,4 @@ export 'project.dart';
 export 'reconciliation.dart';
 export 'report.dart';
 export 'transaction.dart';
+export 'weekly_report.dart';

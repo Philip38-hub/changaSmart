@@ -6,6 +6,7 @@ import '../../theme/app_theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/async_data_view.dart';
 import '../../widgets/status_badge.dart';
+import 'weekly_report_screen.dart';
 
 class ReportScreen extends StatefulWidget {
   final ApiService api;
@@ -30,7 +31,20 @@ class _ReportScreenState extends State<ReportScreen> {
   Widget build(BuildContext context) {
     final isHarambee = widget.collectionType == CollectionType.harambee;
     return Scaffold(
-      appBar: AppBar(title: const Text('Contribution Summary')),
+      appBar: AppBar(
+        title: const Text('Contribution Summary'),
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => WeeklyReportScreen(api: widget.api, collectionId: widget.collectionId),
+              ),
+            ),
+            icon: const Icon(Icons.calendar_month_outlined),
+            tooltip: 'Weekly breakdown',
+          ),
+        ],
+      ),
       body: SafeArea(
         child: AsyncDataView<CollectionReport>(
           loader: _load,

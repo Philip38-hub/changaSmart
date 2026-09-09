@@ -201,6 +201,23 @@ class ApiService {
     return ContributorBulkImportResult.fromJson(result as Map<String, dynamic>);
   }
 
+  /// Records a historical contribution with no M-PESA message behind it
+  /// (e.g. backfilling weeks from a group's existing manual tracker).
+  /// Confirmed immediately -- there's no ambiguity to reconcile since the
+  /// contributor is named directly.
+  Future<Transaction> recordManualContribution({
+    required String collectionId,
+    required String contributorId,
+    required int amount,
+    required DateTime timestamp,
+  }) async {
+    final result = await _post(
+      '/collections/$collectionId/contributors/$contributorId/manual-contributions',
+      {'amount': amount, 'timestamp': timestamp.toUtc().toIso8601String()},
+    );
+    return Transaction.fromJson(result);
+  }
+
   // ---------------------------------------------------------------------
   // Transactions
   // ---------------------------------------------------------------------
@@ -265,10 +282,26 @@ class ApiService {
     return CollectionReport.fromJson(result);
   }
 
-  /// kind: one of full | paid | pending | review | harambee
+  /// kind: one of full | paid | pending | review | harambee | weekly
   Future<String> getWhatsappText(String collectionId, String kind) async {
     final result = await _get('/collections/$collectionId/whatsapp/$kind');
     return result['text'] as String;
+  }
+
+  /// All-weeks report by default; pass weekStart/weekEnd to restrict to one
+  /// week or a range, for a recurring collection's filter-by-time view.
+  Future<WeeklyCollectionReport> getWeeklyReport(
+    String collectionId, {
+    DateTime? weekStart,
+    DateTime? weekEnd,
+  }) async {
+    final params = <String>[
+      if (weekStart != null) 'week_start=${_dateOnly(weekStart)}',
+      if (weekEnd != null) 'week_end=${_dateOnly(weekEnd)}',
+    ];
+    final query = params.isEmpty ? '' : '?${params.join('&')}';
+    final result = await _get('/collections/$collectionId/report/weekly$query');
+    return WeeklyCollectionReport.fromJson(result as Map<String, dynamic>);
   }
 
   String _dateOnly(DateTime date) =>

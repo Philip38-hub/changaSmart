@@ -432,3 +432,43 @@ def test_alias_learned_via_resolve_review_auto_matches_next_payment_over_http():
     assert second_decisions[0]["decision"] == "AUTO_MATCHED"
     assert second_decisions[0]["suggested_contributor_id"] == sarcastic["id"]
     assert "remembered alias" in second_decisions[0]["reason"]
+
+
+def test_manual_contribution_and_weekly_report_over_http():
+    project = client.post("/projects", json={"name": "Weekly Chama HTTP"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    apilo = client.post(
+        f"/collections/{collection['id']}/contributors", json={"name": "Apilo"}
+    ).json()
+
+    manual = client.post(
+        f"/collections/{collection['id']}/contributors/{apilo['id']}/manual-contributions",
+        json={"amount": 100, "timestamp": "2026-08-17T10:00:00Z"},
+    )
+    assert manual.status_code == 200
+    assert manual.json()["status"] == "CONFIRMED"
+
+    weekly = client.get(f"/collections/{collection['id']}/report/weekly").json()
+    assert weekly["grand_total"] == 100
+    assert len(weekly["weeks"]) == 1
+
+    whatsapp = client.get(f"/collections/{collection['id']}/whatsapp/weekly").json()
+    assert "Apilo" in whatsapp["text"]
+    assert "Weekly total: KSh 100" in whatsapp["text"]
+
+
+def test_manual_contribution_unknown_contributor_returns_404():
+    project = client.post("/projects", json={"name": "Weekly Chama HTTP 2"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+
+    response = client.post(
+        f"/collections/{collection['id']}/contributors/contrib_missing/manual-contributions",
+        json={"amount": 100, "timestamp": "2026-08-17T10:00:00Z"},
+    )
+    assert response.status_code == 404

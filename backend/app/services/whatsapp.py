@@ -8,8 +8,8 @@ into a WhatsApp group.
 from __future__ import annotations
 
 from app.models import TransactionStatus
-from app.repositories.memory import store
-from app.services.reporting import generate_collection_report
+from app.repositories.store import store
+from app.services.reporting import generate_collection_report, generate_weekly_report
 
 
 def _money_line(name: str, amount: int) -> str:
@@ -121,4 +121,28 @@ def harambee_progress_update(collection_id: str) -> str:
         lines += ["", "🙏 Other contributions:"]
         lines += [_money_line(e.name, e.total_paid) for e in others]
 
+    return "\n".join(lines).strip()
+
+
+def _format_date(d) -> str:
+    return d.strftime("%d/%m")
+
+
+def weekly_contribution_update(collection_id: str) -> str:
+    """Copy-paste-ready weekly breakdown, formatted to match a typical
+    manually-kept WhatsApp weekly tracker: numbered names per week, a
+    weekly total, and a running grand total."""
+    report = generate_weekly_report(collection_id)
+    if not report.weeks:
+        return f"📢 {report.name} — Weekly Update\n\nNo contributions recorded yet."
+
+    lines = [f"📢 {report.name} — Weekly Update", ""]
+    for week in report.weeks:
+        lines.append(f"Week of {_format_date(week.week_start)} - {_format_date(week.week_end)}")
+        for i, entry in enumerate(week.contributions, start=1):
+            lines.append(f"{i}. {entry.name} — KSh {entry.amount:,}")
+        lines.append(f"Weekly total: KSh {week.weekly_total:,}")
+        lines.append("")
+
+    lines.append(f"Total: KSh {report.grand_total:,}")
     return "\n".join(lines).strip()

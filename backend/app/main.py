@@ -33,12 +33,14 @@ from app.models import (
     Transaction,
     TransactionCandidate,
     TransactionStatus,
+    WeeklyCollectionReport,
 )
 from app.repositories.memory import store
 from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.services import whatsapp as whatsapp_service
 from app.services.reporting import generate_collection_report as build_report
+from app.services.reporting import generate_weekly_report as build_weekly_report
 
 app = FastAPI(
     title="ChangaSmart",
@@ -101,6 +103,11 @@ class ContributorBulkImportRequest(BaseModel):
 class ContributorBulkImportResponse(BaseModel):
     created: list[Contributor]
     skipped_names: list[str]
+
+
+class ManualContributionRequest(BaseModel):
+    amount: int = Field(gt=0)
+    timestamp: dt.datetime
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +217,26 @@ def bulk_import_contributors(
     return ContributorBulkImportResponse(created=created, skipped_names=skipped)
 
 
+@app.post(
+    "/collections/{collection_id}/contributors/{contributor_id}/manual-contributions",
+    response_model=Transaction,
+)
+def record_manual_contribution(
+    collection_id: str, contributor_id: str, payload: ManualContributionRequest
+) -> Transaction:
+    """Record a historical contribution with no M-PESA message behind it
+    (e.g. backfilling weeks from a group's existing manual tracker).
+    Confirmed immediately -- a human is directly naming the contributor, so
+    there is no ambiguity to reconcile."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    if store.contributors.get(contributor_id) is None:
+        raise HTTPException(status_code=404, detail="Contributor not found")
+    return reconciliation_service.record_manual_contribution(
+        collection_id, contributor_id, payload.amount, payload.timestamp
+    )
+
+
 @app.post("/collections/{collection_id}/transactions", response_model=Transaction)
 def create_transaction(
     collection_id: str, payload: TransactionCandidate
@@ -287,9 +314,25 @@ def get_report(collection_id: str) -> CollectionReport:
     return build_report(collection_id)
 
 
+@app.get(
+    "/collections/{collection_id}/report/weekly", response_model=WeeklyCollectionReport
+)
+def get_weekly_report(
+    collection_id: str,
+    week_start: dt.date | None = None,
+    week_end: dt.date | None = None,
+) -> WeeklyCollectionReport:
+    """All-weeks report by default; pass week_start/week_end (ISO dates) to
+    restrict to one week or a range, for a recurring collection's
+    filter-by-time view."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return build_weekly_report(collection_id, week_start, week_end)
+
+
 @app.get("/collections/{collection_id}/whatsapp/{kind}")
 def get_whatsapp_text(collection_id: str, kind: str) -> dict:
-    """kind: one of full | paid | pending | review | harambee"""
+    """kind: one of full | paid | pending | review | harambee | weekly"""
     if store.collections.get(collection_id) is None:
         raise HTTPException(status_code=404, detail="Collection not found")
 
@@ -299,6 +342,7 @@ def get_whatsapp_text(collection_id: str, kind: str) -> dict:
         "pending": whatsapp_service.pending_list,
         "review": whatsapp_service.review_list,
         "harambee": whatsapp_service.harambee_progress_update,
+        "weekly": whatsapp_service.weekly_contribution_update,
     }
     generator = generators.get(kind)
     if generator is None:

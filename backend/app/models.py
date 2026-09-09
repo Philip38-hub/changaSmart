@@ -206,3 +206,23 @@ class CollectionReport(BaseModel):
     confirmed_contributor_count: int
     pending_review_count: int
     contributor_breakdown: list[ContributorBreakdownEntry]
+
+
+class WeeklyContributionEntry(BaseModel):
+    contributor_id: str
+    name: str
+    amount: int
+
+
+class WeeklyBreakdownEntry(BaseModel):
+    week_start: dt.date
+    week_end: dt.date
+    contributions: list[WeeklyContributionEntry]
+    weekly_total: int
+
+
+class WeeklyCollectionReport(BaseModel):
+    collection_id: str
+    name: str
+    weeks: list[WeeklyBreakdownEntry]
+    grand_total: int

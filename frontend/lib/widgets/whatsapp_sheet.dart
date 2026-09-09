@@ -46,6 +46,7 @@ class _WhatsappSheetState extends State<_WhatsappSheet> {
     _kinds = [
       if (widget.type == CollectionType.harambee) const _Kind('harambee', 'Progress'),
       const _Kind('full', 'Full Update'),
+      const _Kind('weekly', 'Weekly'),
       const _Kind('paid', 'Paid'),
       const _Kind('pending', 'Pending'),
       const _Kind('review', 'Issues'),
