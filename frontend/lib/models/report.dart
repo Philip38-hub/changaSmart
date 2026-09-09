@@ -4,6 +4,12 @@ class ContributorBreakdownEntry {
   final String contributorId;
   final String name;
   final int? expectedAmount;
+
+  /// expectedAmount scaled by how many weeks the collection has actually
+  /// recorded so far -- e.g. a KSh 100 weekly amount across 4 recorded
+  /// weeks is a KSh 400 running target, not KSh 100. Null until at least
+  /// one week has been recorded, or when expectedAmount itself isn't set.
+  final int? currentTargetAmount;
   final int totalPaid;
   final ContributorStatus status;
 
@@ -11,6 +17,7 @@ class ContributorBreakdownEntry {
     required this.contributorId,
     required this.name,
     required this.expectedAmount,
+    required this.currentTargetAmount,
     required this.totalPaid,
     required this.status,
   });
@@ -22,6 +29,7 @@ class ContributorBreakdownEntry {
       contributorId: json['contributor_id'] as String,
       name: json['name'] as String,
       expectedAmount: json['expected_amount'] as int?,
+      currentTargetAmount: json['current_target_amount'] as int?,
       totalPaid: json['total_paid'] as int,
       status: contributorStatusFromJson(json['status'] as String),
     );

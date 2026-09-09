@@ -30,6 +30,13 @@ def generate_collection_report(collection_id: str) -> CollectionReport:
     ]
     total_received = sum(t.amount for t in confirmed_transactions)
 
+    # How many distinct weeks this collection actually has a recorded
+    # payment for -- e.g. 4 weeks in, a KSh 100 weekly amount means each
+    # contributor's running target is KSh 400, not KSh 100. Weeks with no
+    # payment from anyone yet don't count, so the target only grows as
+    # the group's history actually does.
+    num_weeks_recorded = len(generate_weekly_report(collection_id).weeks)
+
     breakdown: list[ContributorBreakdownEntry] = []
     for contributor in contributors:
         total_paid = sum(
@@ -37,11 +44,17 @@ def generate_collection_report(collection_id: str) -> CollectionReport:
             for t in confirmed_transactions
             if t.matched_contributor_id == contributor.id
         )
+        current_target_amount = (
+            contributor.expected_amount * num_weeks_recorded
+            if contributor.expected_amount is not None and num_weeks_recorded > 0
+            else None
+        )
         breakdown.append(
             ContributorBreakdownEntry(
                 contributor_id=contributor.id,
                 name=contributor.name,
                 expected_amount=contributor.expected_amount,
+                current_target_amount=current_target_amount,
                 total_paid=total_paid,
                 status=contributor.status,
             )

@@ -57,6 +57,59 @@ def test_contribution_totals_are_computed_deterministically():
     assert report.confirmed_contributor_count == 2
 
 
+def test_contributor_target_scales_with_weeks_actually_recorded():
+    """A KSh 100 weekly amount, 4 weeks into a recurring collection, means
+    each contributor's running target is KSh 400 -- not the flat KSh 100
+    they'd show on day one. Apilo paid every week (400 of 400, fully
+    caught up); Esco missed one (300 of 400)."""
+    project = setup_service.create_project("Loud Thoughts Podcast")
+    collection = setup_service.create_collection(project.id, CollectionType.MAIN, "Main Contribution")
+    apilo = setup_service.create_contributor(collection.id, "Apilo", 100)
+    esco = setup_service.create_contributor(collection.id, "Esco", 100)
+
+    for day in ["2026-08-17", "2026-08-24", "2026-08-31", "2026-09-07"]:
+        reconciliation_service.record_manual_contribution(
+            collection.id, apilo.id, 100, dt.datetime.fromisoformat(f"{day}T10:00:00+00:00")
+        )
+    for day in ["2026-08-17", "2026-08-24", "2026-08-31"]:
+        reconciliation_service.record_manual_contribution(
+            collection.id, esco.id, 100, dt.datetime.fromisoformat(f"{day}T10:00:00+00:00")
+        )
+
+    report = generate_collection_report(collection.id)
+    breakdown = {e.contributor_id: e for e in report.contributor_breakdown}
+
+    assert breakdown[apilo.id].total_paid == 400
+    assert breakdown[apilo.id].current_target_amount == 400
+    assert breakdown[esco.id].total_paid == 300
+    assert breakdown[esco.id].current_target_amount == 400
+
+
+def test_contributor_target_is_null_before_any_week_is_recorded():
+    project = setup_service.create_project("Fresh Fund")
+    collection = setup_service.create_collection(project.id, CollectionType.MAIN, "Main Contribution")
+    mose = setup_service.create_contributor(collection.id, "Mose", 100)
+
+    report = generate_collection_report(collection.id)
+    entry = report.contributor_breakdown[0]
+    assert entry.total_paid == 0
+    assert entry.current_target_amount is None
+    assert mose.expected_amount == 100
+
+
+def test_contributor_target_is_null_with_no_expected_amount():
+    project = setup_service.create_project("No Target Fund")
+    collection = setup_service.create_collection(project.id, CollectionType.MAIN, "Main Contribution")
+    mose = setup_service.create_contributor(collection.id, "Mose")
+    reconciliation_service.record_manual_contribution(
+        collection.id, mose.id, 100, dt.datetime.fromisoformat("2026-08-17T10:00:00+00:00")
+    )
+
+    report = generate_collection_report(collection.id)
+    entry = report.contributor_breakdown[0]
+    assert entry.current_target_amount is None
+
+
 def test_harambee_progress_matches_target_raised_remaining():
     project = setup_service.create_project("Mary's Medical Fund")
     harambee = setup_service.create_collection(

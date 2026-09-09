@@ -97,6 +97,10 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
                   final entry = entries[index];
+                  // The running target scales with how many weeks have
+                  // actually been recorded so far; before any week is
+                  // recorded, fall back to the flat per-week amount.
+                  final targetAmount = entry.currentTargetAmount ?? entry.expectedAmount;
                   return Card(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
@@ -113,8 +117,8 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
                                 Text(entry.name, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
                                 const SizedBox(height: 4),
                                 Text(
-                                  entry.expectedAmount != null
-                                      ? '${formatKsh(entry.totalPaid)} of ${formatKsh(entry.expectedAmount!)}'
+                                  targetAmount != null
+                                      ? '${formatKsh(entry.totalPaid)} of ${formatKsh(targetAmount)}'
                                       : formatKsh(entry.totalPaid),
                                   style: Theme.of(context).textTheme.bodyMedium,
                                 ),

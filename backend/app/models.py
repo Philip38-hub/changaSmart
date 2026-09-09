@@ -203,6 +203,12 @@ class ContributorBreakdownEntry(BaseModel):
     contributor_id: str
     name: str
     expected_amount: int | None
+    # expected_amount scaled by how many weeks the collection has actually
+    # recorded so far (see reporting.generate_collection_report) -- e.g. a
+    # KSh 100 weekly amount across 4 recorded weeks is a KSh 400 target,
+    # not KSh 100. Null until at least one week has been recorded, or when
+    # expected_amount itself isn't set.
+    current_target_amount: int | None
     total_paid: int
     status: ContributorStatus
 
