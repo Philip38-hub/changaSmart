@@ -41,6 +41,50 @@ String collectionTypeToJson(CollectionType type) {
   }
 }
 
+/// How often a MAIN collection expects a recurring contribution. Ignored
+/// for HARAMBEE (a one-off session has no recurring cadence).
+enum PeriodType { weekly, fortnightly, monthly, unknown }
+
+PeriodType periodTypeFromJson(String value) {
+  switch (value) {
+    case 'WEEKLY':
+      return PeriodType.weekly;
+    case 'FORTNIGHTLY':
+      return PeriodType.fortnightly;
+    case 'MONTHLY':
+      return PeriodType.monthly;
+    default:
+      return PeriodType.unknown;
+  }
+}
+
+String periodTypeToJson(PeriodType period) {
+  switch (period) {
+    case PeriodType.weekly:
+      return 'WEEKLY';
+    case PeriodType.fortnightly:
+      return 'FORTNIGHTLY';
+    case PeriodType.monthly:
+      return 'MONTHLY';
+    case PeriodType.unknown:
+      return 'WEEKLY';
+  }
+}
+
+/// Display label for the period type itself, e.g. in a picker.
+String periodTypeLabel(PeriodType period) {
+  switch (period) {
+    case PeriodType.weekly:
+      return 'Weekly';
+    case PeriodType.fortnightly:
+      return 'Fortnightly';
+    case PeriodType.monthly:
+      return 'Monthly';
+    case PeriodType.unknown:
+      return 'Weekly';
+  }
+}
+
 enum CollectionStatus { active, closed, unknown }
 
 CollectionStatus collectionStatusFromJson(String value) {

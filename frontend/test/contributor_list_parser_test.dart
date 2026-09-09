@@ -10,7 +10,7 @@ void main() {
         'Peter Otieno',
         'Anne Otieno',
       ]);
-      expect(result.hasWeeklyData, isFalse);
+      expect(result.hasPeriodData, isFalse);
     });
 
     test('bulleted list', () {
@@ -158,11 +158,11 @@ Total: ksh.1000
 
     test('extracts per-week historical amounts, skipping blanks', () {
       final result = ContributorListParser.parse(list);
-      expect(result.hasWeeklyData, isTrue);
+      expect(result.hasPeriodData, isTrue);
 
       int? amountFor(String name, DateTime week) {
-        final match = result.weeklyEntries.where(
-          (e) => e.name == name && e.weekStart == week,
+        final match = result.periodEntries.where(
+          (e) => e.name == name && e.periodStart == week,
         );
         return match.isEmpty ? null : match.single.amount;
       }
@@ -191,9 +191,9 @@ Total: ksh.1000
     test('weekly totals reconstructed from entries match the original list', () {
       final result = ContributorListParser.parse(list);
       final totalsByWeek = <DateTime, int>{};
-      for (final entry in result.weeklyEntries) {
+      for (final entry in result.periodEntries) {
         totalsByWeek.update(
-          entry.weekStart,
+          entry.periodStart,
           (v) => v + entry.amount,
           ifAbsent: () => entry.amount,
         );
@@ -204,19 +204,19 @@ Total: ksh.1000
 
     test('detects KSh 100 as the group\'s common weekly amount', () {
       final result = ContributorListParser.parse(list);
-      expect(result.detectedWeeklyAmount, 100);
+      expect(result.detectedPeriodAmount, 100);
     });
   });
 
   group('detecting a common weekly amount', () {
     test('no weekly data at all -- nothing to detect', () {
       final result = ContributorListParser.parse('Apilo\nOmosh');
-      expect(result.detectedWeeklyAmount, isNull);
+      expect(result.detectedPeriodAmount, isNull);
     });
 
     test('a single week entry is not enough of a pattern', () {
       final result = ContributorListParser.parse('Week 1 17/08/26\n1. Apilo-100');
-      expect(result.detectedWeeklyAmount, isNull);
+      expect(result.detectedPeriodAmount, isNull);
     });
 
     test('a clear majority across mixed amounts is still detected', () {
@@ -232,7 +232,7 @@ Week 2 24/08/26
 3. Esco-100
 ''';
       final result = ContributorListParser.parse(mixed);
-      expect(result.detectedWeeklyAmount, 100);
+      expect(result.detectedPeriodAmount, 100);
     });
 
     test('no clear majority -- amounts too evenly split', () {
@@ -246,7 +246,7 @@ Week 2 24/08/26
 2. Omosh-200
 ''';
       final result = ContributorListParser.parse(evenlySplit);
-      expect(result.detectedWeeklyAmount, isNull);
+      expect(result.detectedPeriodAmount, isNull);
     });
   });
 }

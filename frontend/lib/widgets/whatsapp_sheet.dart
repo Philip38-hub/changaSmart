@@ -10,12 +10,13 @@ void showWhatsappSheet({
   required ApiService api,
   required String collectionId,
   required CollectionType type,
+  required PeriodType period,
 }) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _WhatsappSheet(api: api, collectionId: collectionId, type: type),
+    builder: (_) => _WhatsappSheet(api: api, collectionId: collectionId, type: type, period: period),
   );
 }
 
@@ -29,8 +30,14 @@ class _WhatsappSheet extends StatefulWidget {
   final ApiService api;
   final String collectionId;
   final CollectionType type;
+  final PeriodType period;
 
-  const _WhatsappSheet({required this.api, required this.collectionId, required this.type});
+  const _WhatsappSheet({
+    required this.api,
+    required this.collectionId,
+    required this.type,
+    required this.period,
+  });
 
   @override
   State<_WhatsappSheet> createState() => _WhatsappSheetState();
@@ -46,7 +53,7 @@ class _WhatsappSheetState extends State<_WhatsappSheet> {
     _kinds = [
       if (widget.type == CollectionType.harambee) const _Kind('harambee', 'Progress'),
       const _Kind('full', 'Full Update'),
-      const _Kind('weekly', 'Weekly'),
+      _Kind('periods', periodTypeLabel(widget.period)),
       const _Kind('paid', 'Paid'),
       const _Kind('pending', 'Pending'),
       const _Kind('review', 'Issues'),

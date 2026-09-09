@@ -51,10 +51,10 @@ Map<String, dynamic> _catchUpTxnJson() => {
 
 Map<String, dynamic> _splitPreviewJson() => {
       'contributor_id': 'contrib_mose',
-      'weekly_amount': 100,
+      'period_amount': 100,
       'installments': [
-        {'week_start': '2026-08-24', 'week_end': '2026-08-30', 'amount': 100},
-        {'week_start': '2026-08-31', 'week_end': '2026-09-06', 'amount': 100},
+        {'period_start': '2026-08-24', 'period_end': '2026-08-30', 'amount': 100},
+        {'period_start': '2026-08-31', 'period_end': '2026-09-06', 'amount': 100},
       ],
     };
 
@@ -85,6 +85,7 @@ Future<void> _pump(
   ApiService api, {
   Transaction? transaction,
   String? suggestedContributorName,
+  PeriodType period = PeriodType.weekly,
   void Function(Transaction updated)? onResolved,
 }) async {
   await tester.pumpWidget(
@@ -100,6 +101,7 @@ Future<void> _pump(
               collectionId: 'coll_1',
               transaction: transaction ?? _txn(),
               suggestedContributorName: suggestedContributorName,
+              period: period,
               onResolved: onResolved ?? (_) {},
             ),
           ),
@@ -209,7 +211,7 @@ void main() {
     expect(body['effective_date'], '2026-09-08');
   });
 
-  testWidgets('splitting a catch-up payment previews then commits the weekly breakdown', (tester) async {
+  testWidgets('splitting a catch-up payment previews then commits the period breakdown', (tester) async {
     Uri? previewUrl;
     http.Request? splitRequest;
     Transaction? resolvedTxn;
@@ -220,7 +222,7 @@ void main() {
           previewUrl = request.url;
           return _json(_splitPreviewJson());
         }
-        if (request.method == 'POST' && request.url.path.endsWith('/split-into-weeks')) {
+        if (request.method == 'POST' && request.url.path.endsWith('/split-into-periods')) {
           splitRequest = request;
           return _json(_splitResultJson());
         }
@@ -236,14 +238,14 @@ void main() {
       onResolved: (updated) => resolvedTxn = updated,
     );
 
-    await tester.tap(find.text('Split into weekly contributions'));
+    await tester.tap(find.text('Split into multiple contributions'));
     await tester.pumpAndSettle();
 
     expect(previewUrl, isNotNull);
     expect(previewUrl!.queryParameters['contributor_id'], 'contrib_mose');
 
-    // Preview dialog shows the computed per-week breakdown before anything
-    // is committed.
+    // Preview dialog shows the computed per-period breakdown before
+    // anything is committed.
     expect(find.text('Week of 24 Aug 2026'), findsOneWidget);
     expect(find.text('Week of 31 Aug 2026'), findsOneWidget);
     expect(splitRequest, isNull);
@@ -255,6 +257,6 @@ void main() {
     final body = jsonDecode(splitRequest!.body) as Map<String, dynamic>;
     expect(body['contributor_id'], 'contrib_mose');
     expect(resolvedTxn?.status, TransactionStatus.ignored);
-    expect(find.text('Split into 2 weekly contributions.'), findsOneWidget);
+    expect(find.text('Split into 2 contributions.'), findsOneWidget);
   });
 }

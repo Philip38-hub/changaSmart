@@ -1,12 +1,14 @@
-class WeeklyContributionEntry {
+import 'enums.dart';
+
+class PeriodContributionEntry {
   final String contributorId;
   final String name;
   final int amount;
 
-  WeeklyContributionEntry({required this.contributorId, required this.name, required this.amount});
+  PeriodContributionEntry({required this.contributorId, required this.name, required this.amount});
 
-  factory WeeklyContributionEntry.fromJson(Map<String, dynamic> json) {
-    return WeeklyContributionEntry(
+  factory PeriodContributionEntry.fromJson(Map<String, dynamic> json) {
+    return PeriodContributionEntry(
       contributorId: json['contributor_id'] as String,
       name: json['name'] as String,
       amount: json['amount'] as int,
@@ -14,50 +16,55 @@ class WeeklyContributionEntry {
   }
 }
 
-class WeeklyBreakdownEntry {
-  final DateTime weekStart;
-  final DateTime weekEnd;
-  final List<WeeklyContributionEntry> contributions;
-  final int weeklyTotal;
+class PeriodBreakdownEntry {
+  final DateTime periodStart;
+  final DateTime periodEnd;
+  final List<PeriodContributionEntry> contributions;
+  final int periodTotal;
 
-  WeeklyBreakdownEntry({
-    required this.weekStart,
-    required this.weekEnd,
+  PeriodBreakdownEntry({
+    required this.periodStart,
+    required this.periodEnd,
     required this.contributions,
-    required this.weeklyTotal,
+    required this.periodTotal,
   });
 
-  factory WeeklyBreakdownEntry.fromJson(Map<String, dynamic> json) {
-    return WeeklyBreakdownEntry(
-      weekStart: DateTime.parse(json['week_start'] as String),
-      weekEnd: DateTime.parse(json['week_end'] as String),
+  factory PeriodBreakdownEntry.fromJson(Map<String, dynamic> json) {
+    return PeriodBreakdownEntry(
+      periodStart: DateTime.parse(json['period_start'] as String),
+      periodEnd: DateTime.parse(json['period_end'] as String),
       contributions: (json['contributions'] as List)
-          .map((e) => WeeklyContributionEntry.fromJson(e as Map<String, dynamic>))
+          .map((e) => PeriodContributionEntry.fromJson(e as Map<String, dynamic>))
           .toList(),
-      weeklyTotal: json['weekly_total'] as int,
+      periodTotal: json['period_total'] as int,
     );
   }
 }
 
-class WeeklyCollectionReport {
+/// A recurring collection's contributions grouped by its configured
+/// period (weekly, fortnightly, or monthly -- see Collection.period).
+class PeriodCollectionReport {
   final String collectionId;
   final String name;
-  final List<WeeklyBreakdownEntry> weeks;
+  final PeriodType period;
+  final List<PeriodBreakdownEntry> periods;
   final int grandTotal;
 
-  WeeklyCollectionReport({
+  PeriodCollectionReport({
     required this.collectionId,
     required this.name,
-    required this.weeks,
+    required this.period,
+    required this.periods,
     required this.grandTotal,
   });
 
-  factory WeeklyCollectionReport.fromJson(Map<String, dynamic> json) {
-    return WeeklyCollectionReport(
+  factory PeriodCollectionReport.fromJson(Map<String, dynamic> json) {
+    return PeriodCollectionReport(
       collectionId: json['collection_id'] as String,
       name: json['name'] as String,
-      weeks: (json['weeks'] as List)
-          .map((e) => WeeklyBreakdownEntry.fromJson(e as Map<String, dynamic>))
+      period: periodTypeFromJson(json['period'] as String),
+      periods: (json['periods'] as List)
+          .map((e) => PeriodBreakdownEntry.fromJson(e as Map<String, dynamic>))
           .toList(),
       grandTotal: json['grand_total'] as int,
     );

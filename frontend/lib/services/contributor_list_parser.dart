@@ -20,41 +20,45 @@ class ParsedContributorRow {
   });
 }
 
-/// One week's recorded amount for a contributor, extracted from a
-/// "Week N `<date>`" block in the pasted text -- e.g. `1. Apilo-100` under
-/// `Week 1 17/08/26` becomes `(name: "Apilo", weekStart: 2026-08-17,
-/// amount: 100)`. Only produced when the paste actually contains week
-/// headers; a flat list produces none of these.
-class ParsedWeeklyEntry {
+/// One period's recorded amount for a contributor, extracted from a
+/// "Week N `<date>`" (or "Fortnight N"/"Month N") block in the pasted
+/// text -- e.g. `1. Apilo-100` under `Week 1 17/08/26` becomes
+/// `(name: "Apilo", periodStart: 2026-08-17, amount: 100)`. Only produced
+/// when the paste actually contains period headers; a flat list produces
+/// none of these. This is purely about recognizing whatever period-labeled
+/// blocks appear in the pasted text -- independent of the collection's own
+/// configured Collection.period, which is set separately at creation time.
+class ParsedPeriodEntry {
   final String name;
-  final DateTime weekStart;
+  final DateTime periodStart;
   final int amount;
 
-  ParsedWeeklyEntry({
+  ParsedPeriodEntry({
     required this.name,
-    required this.weekStart,
+    required this.periodStart,
     required this.amount,
   });
 }
 
 class ContributorListParseResult {
   final List<ParsedContributorRow> contributors;
-  final List<ParsedWeeklyEntry> weeklyEntries;
-  final bool hasWeeklyData;
+  final List<ParsedPeriodEntry> periodEntries;
+  final bool hasPeriodData;
 
-  /// If a clear majority of the per-week amounts in the paste agree on one
-  /// figure (e.g. everyone paying KSh 100 most weeks), this is very likely
-  /// the group's actual weekly contribution -- even though no one ever
-  /// set an expected_amount explicitly (bulk-imported contributors
-  /// deliberately don't get one, see ContributorListParser). Null when
-  /// there's no weekly data, too little of it, or no clear agreement.
-  final int? detectedWeeklyAmount;
+  /// If a clear majority of the per-period amounts in the paste agree on
+  /// one figure (e.g. everyone paying KSh 100 most weeks), this is very
+  /// likely the group's actual recurring contribution -- even though no
+  /// one ever set an expected_amount explicitly (bulk-imported
+  /// contributors deliberately don't get one, see ContributorListParser).
+  /// Null when there's no period data, too little of it, or no clear
+  /// agreement.
+  final int? detectedPeriodAmount;
 
   ContributorListParseResult({
     required this.contributors,
-    required this.weeklyEntries,
-    required this.hasWeeklyData,
-    this.detectedWeeklyAmount,
+    required this.periodEntries,
+    required this.hasPeriodData,
+    this.detectedPeriodAmount,
   });
 }
 
@@ -62,8 +66,8 @@ class ContributorListParser {
   static final RegExp _numberedPrefix = RegExp(r'^\s*\d+[.)]\s*');
   static final RegExp _bulletPrefix = RegExp(r'^\s*[-*•]\s*');
   static final RegExp _trailingDashAmount = RegExp(r'^(.*?)-\s*(\d*)\s*$');
-  static final RegExp _weekHeader = RegExp(
-    r'week\s+\d+.*?(\d{1,2})/(\d{1,2})/(\d{2,4})',
+  static final RegExp _periodHeader = RegExp(
+    r'(?:week|fortnight|month)\s+\d+.*?(\d{1,2})/(\d{1,2})/(\d{2,4})',
     caseSensitive: false,
   );
 
@@ -72,23 +76,23 @@ class ContributorListParser {
     final isNumberedList = lines.any((l) => _numberedPrefix.hasMatch(l));
 
     final contributors = <ParsedContributorRow>[];
-    final weeklyEntries = <ParsedWeeklyEntry>[];
+    final periodEntries = <ParsedPeriodEntry>[];
     final seenNames = <String>{};
-    DateTime? currentWeekStart;
-    var hasWeeklyData = false;
+    DateTime? currentPeriodStart;
+    var hasPeriodData = false;
 
     for (final rawLine in lines) {
       final line = rawLine.trim();
       if (line.isEmpty) continue;
 
-      final weekMatch = _weekHeader.firstMatch(line);
-      if (weekMatch != null) {
-        currentWeekStart = _parseDdMmYy(
-          weekMatch.group(1)!,
-          weekMatch.group(2)!,
-          weekMatch.group(3)!,
+      final periodMatch = _periodHeader.firstMatch(line);
+      if (periodMatch != null) {
+        currentPeriodStart = _parseDdMmYy(
+          periodMatch.group(1)!,
+          periodMatch.group(2)!,
+          periodMatch.group(3)!,
         );
-        hasWeeklyData = true;
+        hasPeriodData = true;
         continue;
       }
 
@@ -120,11 +124,11 @@ class ContributorListParser {
         );
       }
 
-      if (currentWeekStart != null && entry.dashAmount != null) {
-        weeklyEntries.add(
-          ParsedWeeklyEntry(
+      if (currentPeriodStart != null && entry.dashAmount != null) {
+        periodEntries.add(
+          ParsedPeriodEntry(
             name: entry.name,
-            weekStart: currentWeekStart,
+            periodStart: currentPeriodStart,
             amount: entry.dashAmount!,
           ),
         );
@@ -133,17 +137,17 @@ class ContributorListParser {
 
     return ContributorListParseResult(
       contributors: contributors,
-      weeklyEntries: weeklyEntries,
-      hasWeeklyData: hasWeeklyData,
-      detectedWeeklyAmount: _detectCommonWeeklyAmount(weeklyEntries),
+      periodEntries: periodEntries,
+      hasPeriodData: hasPeriodData,
+      detectedPeriodAmount: _detectCommonPeriodAmount(periodEntries),
     );
   }
 
-  /// A clear majority (>=60%) of the recorded weekly amounts agreeing on
-  /// one figure is treated as the group's real weekly contribution.
+  /// A clear majority (>=60%) of the recorded period amounts agreeing on
+  /// one figure is treated as the group's real recurring contribution.
   /// Requires at least a couple of data points so a single contributor's
-  /// one-off week can't be mistaken for a group-wide pattern.
-  static int? _detectCommonWeeklyAmount(List<ParsedWeeklyEntry> entries) {
+  /// one-off period can't be mistaken for a group-wide pattern.
+  static int? _detectCommonPeriodAmount(List<ParsedPeriodEntry> entries) {
     if (entries.length < 2) return null;
     final counts = <int, int>{};
     for (final entry in entries) {
@@ -166,12 +170,12 @@ class ContributorListParser {
       return (name: name, csvAmount: amount, dashAmount: null, phone: phone);
     }
 
-    // Informal "Name-100" / "Name-" weekly-note style. The trailing number
-    // is never treated as a stable expected_amount (that's a per-week
-    // actual, not a pledge) -- it's only ever surfaced as a weekly-history
-    // entry when a week header is in effect. Only strip when what follows
-    // the last "-" is purely digits or empty, so a genuinely hyphenated
-    // name (e.g. "Mary-Jane") is left untouched.
+    // Informal "Name-100" / "Name-" period-note style. The trailing number
+    // is never treated as a stable expected_amount (that's a per-period
+    // actual, not a pledge) -- it's only ever surfaced as a period-history
+    // entry when a period header is in effect. Only strip when what
+    // follows the last "-" is purely digits or empty, so a genuinely
+    // hyphenated name (e.g. "Mary-Jane") is left untouched.
     final dashMatch = _trailingDashAmount.firstMatch(content);
     if (dashMatch != null && dashMatch.group(1)!.trim().isNotEmpty) {
       final name = dashMatch.group(1)!.trim();

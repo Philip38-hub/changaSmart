@@ -61,6 +61,8 @@ void main() {
             'status': 'ACTIVE',
             'date': null,
             'created_at': '2026-09-01T10:00:00Z',
+            'period': 'WEEKLY',
+            'period_anchor': '2026-09-01',
           }
         ]);
       }

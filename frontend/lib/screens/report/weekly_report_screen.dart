@@ -5,52 +5,66 @@ import '../../services/api_service.dart';
 import '../../utils/format.dart';
 import '../../widgets/async_data_view.dart';
 
-/// Week-by-week contribution breakdown for a recurring collection, with an
-/// "All weeks" view (the default) and the ability to drill into one week --
-/// the "filter by time" view alongside the copy-paste "Weekly" WhatsApp
-/// export (see widgets/whatsapp_sheet.dart).
-class WeeklyReportScreen extends StatefulWidget {
+/// Period-by-period contribution breakdown for a recurring collection, with
+/// an "All periods" view (the default) and the ability to drill into one
+/// period -- the "filter by time" view alongside the copy-paste "Periods"
+/// WhatsApp export (see widgets/whatsapp_sheet.dart). "Period" follows the
+/// collection's own configured cadence (Collection.period): weekly,
+/// fortnightly, or monthly.
+class PeriodReportScreen extends StatefulWidget {
   final ApiService api;
   final String collectionId;
 
-  const WeeklyReportScreen({super.key, required this.api, required this.collectionId});
+  const PeriodReportScreen({super.key, required this.api, required this.collectionId});
 
   @override
-  State<WeeklyReportScreen> createState() => _WeeklyReportScreenState();
+  State<PeriodReportScreen> createState() => _PeriodReportScreenState();
 }
 
-class _WeeklyReportScreenState extends State<WeeklyReportScreen> {
-  final _dataKey = GlobalKey<AsyncDataViewState<WeeklyCollectionReport>>();
-  DateTime? _selectedWeekStart;
+class _PeriodData {
+  final PeriodType period;
+  final PeriodCollectionReport report;
+  _PeriodData({required this.period, required this.report});
+}
 
-  Future<WeeklyCollectionReport> _load() => widget.api.getWeeklyReport(widget.collectionId);
+class _PeriodReportScreenState extends State<PeriodReportScreen> {
+  final _dataKey = GlobalKey<AsyncDataViewState<_PeriodData>>();
+  DateTime? _selectedPeriodStart;
+
+  Future<_PeriodData> _load() async {
+    final collection = await widget.api.getCollection(widget.collectionId);
+    final report = await widget.api.getPeriodReport(widget.collectionId);
+    return _PeriodData(period: collection.period, report: report);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Weekly Breakdown')),
+      appBar: AppBar(title: const Text('Period Breakdown')),
       body: SafeArea(
-        child: AsyncDataView<WeeklyCollectionReport>(
+        child: AsyncDataView<_PeriodData>(
           key: _dataKey,
           loader: _load,
-          builder: (context, report, refresh) {
-            if (report.weeks.isEmpty) {
-              return const EmptyState(
+          builder: (context, data, refresh) {
+            final label = _periodLabel(data.period);
+            final periods = data.report.periods;
+            if (periods.isEmpty) {
+              return EmptyState(
                 icon: Icons.calendar_month_outlined,
-                title: 'No weekly contributions yet',
-                subtitle: 'Confirmed contributions will show up here grouped by week.',
+                title: 'No ${label.toLowerCase()} contributions yet',
+                subtitle: 'Confirmed contributions will show up here grouped by ${label.toLowerCase()}.',
               );
             }
-            final weeksToShow = _selectedWeekStart == null
-                ? report.weeks
-                : report.weeks.where((w) => w.weekStart == _selectedWeekStart).toList();
+            final toShow = _selectedPeriodStart == null
+                ? periods
+                : periods.where((p) => p.periodStart == _selectedPeriodStart).toList();
             return RefreshIndicator(
               onRefresh: () async => refresh(),
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(20),
                 children: [
-                  Text('Total: ${formatKsh(report.grandTotal)}', style: Theme.of(context).textTheme.titleMedium),
+                  Text('Total: ${formatKsh(data.report.grandTotal)}', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 12),
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -59,26 +73,29 @@ class _WeeklyReportScreenState extends State<WeeklyReportScreen> {
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ChoiceChip(
-                            label: const Text('All weeks'),
-                            selected: _selectedWeekStart == null,
-                            onSelected: (_) => setState(() => _selectedWeekStart = null),
+                            label: Text('All ${label.toLowerCase()}s'),
+                            selected: _selectedPeriodStart == null,
+                            onSelected: (_) => setState(() => _selectedPeriodStart = null),
                           ),
                         ),
-                        for (final week in report.weeks)
+                        for (final period in periods)
                           Padding(
                             padding: const EdgeInsets.only(right: 8),
                             child: ChoiceChip(
-                              label: Text(_weekLabel(week)),
-                              selected: _selectedWeekStart == week.weekStart,
-                              onSelected: (_) => setState(() => _selectedWeekStart = week.weekStart),
+                              label: Text(_periodRangeLabel(period)),
+                              selected: _selectedPeriodStart == period.periodStart,
+                              onSelected: (_) => setState(() => _selectedPeriodStart = period.periodStart),
                             ),
                           ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 16),
-                  for (final week in weeksToShow) ...[
-                    Text(_weekLabel(week), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                  for (final period in toShow) ...[
+                    Text(
+                      '$label of ${_periodRangeLabel(period)}',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                    ),
                     const SizedBox(height: 8),
                     Card(
                       shape: RoundedRectangleBorder(
@@ -87,12 +104,12 @@ class _WeeklyReportScreenState extends State<WeeklyReportScreen> {
                       ),
                       child: Column(
                         children: [
-                          for (final entry in week.contributions)
+                          for (final entry in period.contributions)
                             ListTile(title: Text(entry.name), trailing: Text(formatKsh(entry.amount))),
                           ListTile(
-                            title: const Text('Weekly total', style: TextStyle(fontWeight: FontWeight.w700)),
+                            title: Text('${label}ly total', style: const TextStyle(fontWeight: FontWeight.w700)),
                             trailing: Text(
-                              formatKsh(week.weeklyTotal),
+                              formatKsh(period.periodTotal),
                               style: const TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ),
@@ -110,9 +127,21 @@ class _WeeklyReportScreenState extends State<WeeklyReportScreen> {
     );
   }
 
-  String _weekLabel(WeeklyBreakdownEntry week) {
+  String _periodLabel(PeriodType period) {
+    switch (period) {
+      case PeriodType.fortnightly:
+        return 'Fortnight';
+      case PeriodType.monthly:
+        return 'Month';
+      case PeriodType.weekly:
+      case PeriodType.unknown:
+        return 'Week';
+    }
+  }
+
+  String _periodRangeLabel(PeriodBreakdownEntry period) {
     String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(week.weekStart.day)}/${two(week.weekStart.month)} - '
-        '${two(week.weekEnd.day)}/${two(week.weekEnd.month)}';
+    return '${two(period.periodStart.day)}/${two(period.periodStart.month)} - '
+        '${two(period.periodEnd.day)}/${two(period.periodEnd.month)}';
   }
 }

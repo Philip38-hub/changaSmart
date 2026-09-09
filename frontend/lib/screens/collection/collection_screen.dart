@@ -100,8 +100,14 @@ class _CollectionScreenState extends State<CollectionScreen> {
     }
   }
 
-  void _showWhatsappSheet(CollectionType type) {
-    showWhatsappSheet(context: context, api: widget.api, collectionId: widget.collectionId, type: type);
+  void _showWhatsappSheet(CollectionType type, PeriodType period) {
+    showWhatsappSheet(
+      context: context,
+      api: widget.api,
+      collectionId: widget.collectionId,
+      type: type,
+      period: period,
+    );
   }
 
   @override
@@ -229,7 +235,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
                   _ActionTile(
                     icon: Icons.chat_bubble_outline,
                     label: 'WhatsApp Update',
-                    onTap: () => _showWhatsappSheet(collection.type),
+                    onTap: () => _showWhatsappSheet(collection.type, collection.period),
                   ),
                   if (isHarambee && !collection.isClosed) ...[
                     const SizedBox(height: 20),

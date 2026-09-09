@@ -60,6 +60,19 @@ Map<String, dynamic> _txnJson(String code, String sender, int amount, {String st
       'review_reason': null,
     };
 
+Map<String, dynamic> _collectionJson() => {
+      'id': 'coll_1',
+      'project_id': 'proj_1',
+      'type': 'MAIN',
+      'name': 'Main Contribution',
+      'target_amount': null,
+      'status': 'ACTIVE',
+      'date': null,
+      'created_at': '2026-09-01T10:00:00Z',
+      'period': 'WEEKLY',
+      'period_anchor': '2026-09-01',
+    };
+
 Map<String, dynamic> _reportJson() => {
       'collection_id': 'coll_1',
       'name': 'Main Contribution',
@@ -239,6 +252,9 @@ void main() {
         }
         if (r.method == 'GET' && r.url.path.endsWith('/report')) {
           return _json(_reportJson());
+        }
+        if (r.method == 'GET' && r.url.path.endsWith('/coll_1')) {
+          return _json(_collectionJson());
         }
         return _json({});
       }),

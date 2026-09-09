@@ -24,12 +24,25 @@ class ImportContributorsScreen extends StatefulWidget {
 class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
   final _textController = TextEditingController();
   List<Contributor>? _existingContributors;
+  PeriodType _period = PeriodType.weekly;
   ContributorListParseResult? _parsed;
   final Set<int> _excludedIndices = {};
   bool _includeHistorical = false;
   bool _importing = false;
-  int? _weeklyTargetToApply;
-  bool _weeklyTargetPromptDismissed = false;
+  int? _periodTargetToApply;
+  bool _periodTargetPromptDismissed = false;
+
+  String get _periodAdverb => switch (_period) {
+        PeriodType.fortnightly => 'fortnightly',
+        PeriodType.monthly => 'monthly',
+        PeriodType.weekly || PeriodType.unknown => 'weekly',
+      };
+
+  String get _periodWord => switch (_period) {
+        PeriodType.fortnightly => 'fortnight',
+        PeriodType.monthly => 'month',
+        PeriodType.weekly || PeriodType.unknown => 'week',
+      };
 
   @override
   void initState() {
@@ -38,6 +51,11 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
       if (mounted) setState(() => _existingContributors = list);
     }).catchError((_) {
       if (mounted) setState(() => _existingContributors = const []);
+    });
+    widget.api.getCollection(widget.collectionId).then((collection) {
+      if (mounted) setState(() => _period = collection.period);
+    }).catchError((_) {
+      // Best-effort only -- copy just falls back to "weekly" phrasing.
     });
     // The "Parse" button's enabled state depends on _textController.text,
     // which is read directly in build() -- without this listener, typing
@@ -62,8 +80,8 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
       _parsed = result;
       _excludedIndices.clear();
       _includeHistorical = false;
-      _weeklyTargetToApply = null;
-      _weeklyTargetPromptDismissed = false;
+      _periodTargetToApply = null;
+      _periodTargetPromptDismissed = false;
     });
   }
 
@@ -92,22 +110,22 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
             (
               name: row.name,
               // A row's own explicit amount (from a CSV column) always
-              // wins; the detected weekly target only fills in for rows
+              // wins; the detected period target only fills in for rows
               // that don't have one.
-              expectedAmount: row.expectedAmount ?? _weeklyTargetToApply,
+              expectedAmount: row.expectedAmount ?? _periodTargetToApply,
               phone: row.phone,
             ),
         ],
       );
 
       var historicalCount = 0;
-      if (_includeHistorical && parsed.weeklyEntries.isNotEmpty) {
+      if (_includeHistorical && parsed.periodEntries.isNotEmpty) {
         final idByName = <String, String>{
           for (final c in _existingContributors ?? const <Contributor>[])
             c.name.trim().toLowerCase(): c.id,
           for (final c in result.created) c.name.trim().toLowerCase(): c.id,
         };
-        for (final entry in parsed.weeklyEntries) {
+        for (final entry in parsed.periodEntries) {
           final contributorId = idByName[entry.name.trim().toLowerCase()];
           if (contributorId == null) continue;
           try {
@@ -115,7 +133,7 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
               collectionId: widget.collectionId,
               contributorId: contributorId,
               amount: entry.amount,
-              timestamp: entry.weekStart,
+              timestamp: entry.periodStart,
             );
             historicalCount++;
           } catch (_) {
@@ -237,9 +255,9 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
             ],
           ),
         ),
-        if (parsed.detectedWeeklyAmount != null &&
-            _weeklyTargetToApply == null &&
-            !_weeklyTargetPromptDismissed)
+        if (parsed.detectedPeriodAmount != null &&
+            _periodTargetToApply == null &&
+            !_periodTargetPromptDismissed)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: Card(
@@ -255,23 +273,23 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
                   children: [
                     Text(
                       'Looks like this group contributes '
-                      '${formatKsh(parsed.detectedWeeklyAmount!)} weekly. Set '
-                      'this as everyone\'s expected weekly amount?',
+                      '${formatKsh(parsed.detectedPeriodAmount!)} $_periodAdverb. Set '
+                      'this as everyone\'s expected amount?',
                     ),
                     const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         TextButton(
-                          onPressed: () => setState(() => _weeklyTargetPromptDismissed = true),
+                          onPressed: () => setState(() => _periodTargetPromptDismissed = true),
                           child: const Text('No thanks'),
                         ),
                         const SizedBox(width: 8),
                         FilledButton.tonal(
                           onPressed: () => setState(
-                            () => _weeklyTargetToApply = parsed.detectedWeeklyAmount,
+                            () => _periodTargetToApply = parsed.detectedPeriodAmount,
                           ),
-                          child: Text('Set ${formatKsh(parsed.detectedWeeklyAmount!)} as target'),
+                          child: Text('Set ${formatKsh(parsed.detectedPeriodAmount!)} as target'),
                         ),
                       ],
                     ),
@@ -280,7 +298,7 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
               ),
             ),
           ),
-        if (_weeklyTargetToApply != null)
+        if (_periodTargetToApply != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: Row(
@@ -289,19 +307,19 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '${formatKsh(_weeklyTargetToApply!)} weekly target will be applied to '
+                    '${formatKsh(_periodTargetToApply!)} target will be applied to '
                     'contributors without one.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
                 TextButton(
-                  onPressed: () => setState(() => _weeklyTargetToApply = null),
+                  onPressed: () => setState(() => _periodTargetToApply = null),
                   child: const Text('Undo'),
                 ),
               ],
             ),
           ),
-        if (parsed.hasWeeklyData)
+        if (parsed.hasPeriodData)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: CheckboxListTile(
@@ -309,8 +327,8 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
               value: _includeHistorical,
               onChanged: (v) => setState(() => _includeHistorical = v ?? false),
               title: Text(
-                'Also import each week\'s amount as a historical record '
-                '(${parsed.weeklyEntries.length} entries, no M-PESA message needed)',
+                'Also import each $_periodWord\'s amount as a historical record '
+                '(${parsed.periodEntries.length} entries, no M-PESA message needed)',
               ),
               controlAffinity: ListTileControlAffinity.leading,
             ),
@@ -323,7 +341,7 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
               final row = parsed.contributors[index];
               final isDuplicate = existing.contains(row.name.trim().toLowerCase());
               final excluded = _excludedIndices.contains(index);
-              final effectiveAmount = row.expectedAmount ?? _weeklyTargetToApply;
+              final effectiveAmount = row.expectedAmount ?? _periodTargetToApply;
               return Card(
                 margin: const EdgeInsets.only(bottom: 8),
                 shape: RoundedRectangleBorder(

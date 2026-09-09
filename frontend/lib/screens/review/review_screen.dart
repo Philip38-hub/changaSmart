@@ -22,12 +22,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
   final _dataKey = GlobalKey<AsyncDataViewState<_ReviewData>>();
 
   Future<_ReviewData> _load() async {
+    final collection = await widget.api.getCollection(widget.collectionId);
     final transactions = await widget.api.listTransactions(widget.collectionId);
     final report = await widget.api.getReport(widget.collectionId);
     final needsReview = transactions.where((t) => t.needsReview).toList()
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final names = {for (final e in report.contributorBreakdown) e.contributorId: e.name};
-    return _ReviewData(transactions: needsReview, contributorNames: names);
+    return _ReviewData(transactions: needsReview, contributorNames: names, period: collection.period);
   }
 
   @override
@@ -66,6 +67,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                         suggestedContributorName: txn.matchedContributorId == null
                             ? null
                             : data.contributorNames[txn.matchedContributorId],
+                        period: data.period,
                         onResolved: (_) => refresh(),
                       ),
                     ),
@@ -83,5 +85,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
 class _ReviewData {
   final List<Transaction> transactions;
   final Map<String, String> contributorNames;
-  _ReviewData({required this.transactions, required this.contributorNames});
+  final PeriodType period;
+  _ReviewData({required this.transactions, required this.contributorNames, required this.period});
 }

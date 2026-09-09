@@ -9,6 +9,8 @@ class Collection {
   final CollectionStatus status;
   final DateTime? date;
   final DateTime createdAt;
+  final PeriodType period;
+  final DateTime periodAnchor;
 
   Collection({
     required this.id,
@@ -19,6 +21,8 @@ class Collection {
     required this.status,
     required this.date,
     required this.createdAt,
+    required this.period,
+    required this.periodAnchor,
   });
 
   bool get isHarambee => type == CollectionType.harambee;
@@ -34,6 +38,8 @@ class Collection {
       status: collectionStatusFromJson(json['status'] as String),
       date: json['date'] == null ? null : DateTime.parse(json['date'] as String),
       createdAt: DateTime.parse(json['created_at'] as String),
+      period: periodTypeFromJson(json['period'] as String),
+      periodAnchor: DateTime.parse(json['period_anchor'] as String),
     );
   }
 }

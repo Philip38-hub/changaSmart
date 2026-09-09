@@ -143,12 +143,16 @@ class ApiService {
     required String name,
     int? targetAmount,
     DateTime? date,
+    PeriodType period = PeriodType.weekly,
+    DateTime? periodAnchor,
   }) async {
     final result = await _post('/projects/$projectId/collections', {
       'type': collectionTypeToJson(type),
       'name': name,
       if (targetAmount != null) 'target_amount': targetAmount,
       if (date != null) 'date': _dateOnly(date),
+      'period': periodTypeToJson(period),
+      if (periodAnchor != null) 'period_anchor': _dateOnly(periodAnchor),
     });
     return Collection.fromJson(result);
   }
@@ -296,45 +300,47 @@ class ApiService {
     return CollectionReport.fromJson(result);
   }
 
-  /// kind: one of full | paid | pending | review | harambee | weekly
+  /// kind: one of full | paid | pending | review | harambee | periods
   Future<String> getWhatsappText(String collectionId, String kind) async {
     final result = await _get('/collections/$collectionId/whatsapp/$kind');
     return result['text'] as String;
   }
 
-  /// All-weeks report by default; pass weekStart/weekEnd to restrict to one
-  /// week or a range, for a recurring collection's filter-by-time view.
-  Future<WeeklyCollectionReport> getWeeklyReport(
+  /// All-periods report by default; pass periodStart/periodEnd to restrict
+  /// to one period or a range, for a recurring collection's
+  /// filter-by-time view. A "period" is a week, fortnight, or month
+  /// depending on the collection's configured period.
+  Future<PeriodCollectionReport> getPeriodReport(
     String collectionId, {
-    DateTime? weekStart,
-    DateTime? weekEnd,
+    DateTime? periodStart,
+    DateTime? periodEnd,
   }) async {
     final params = <String>[
-      if (weekStart != null) 'week_start=${_dateOnly(weekStart)}',
-      if (weekEnd != null) 'week_end=${_dateOnly(weekEnd)}',
+      if (periodStart != null) 'period_start=${_dateOnly(periodStart)}',
+      if (periodEnd != null) 'period_end=${_dateOnly(periodEnd)}',
     ];
     final query = params.isEmpty ? '' : '?${params.join('&')}';
-    final result = await _get('/collections/$collectionId/report/weekly$query');
-    return WeeklyCollectionReport.fromJson(result as Map<String, dynamic>);
+    final result = await _get('/collections/$collectionId/report/periods$query');
+    return PeriodCollectionReport.fromJson(result as Map<String, dynamic>);
   }
 
-  /// Weeks where someone else in this collection has a confirmed
+  /// Periods where someone else in this collection has a confirmed
   /// contribution but this contributor doesn't -- used to nudge a freshly
-  /// auto-matched payment toward an earlier week it might actually belong
-  /// to, without ever blocking or double-counting it.
-  Future<List<DateTime>> getMissingWeeks({
+  /// auto-matched payment toward an earlier period it might actually
+  /// belong to, without ever blocking or double-counting it.
+  Future<List<DateTime>> getMissingPeriods({
     required String collectionId,
     required String contributorId,
   }) async {
     final result = await _get(
-      '/collections/$collectionId/contributors/$contributorId/missing-weeks',
+      '/collections/$collectionId/contributors/$contributorId/missing-periods',
     );
     return (result as List).map((e) => DateTime.parse(e as String)).toList();
   }
 
   /// Corrects which period an already-resolved transaction counts toward
   /// in reporting -- never touches its real message timestamp or credited
-  /// contributor, only which week it's bucketed into.
+  /// contributor, only which period it's bucketed into.
   Future<Transaction> setTransactionEffectiveDate({
     required String transactionId,
     required DateTime effectiveDate,
@@ -345,31 +351,31 @@ class ApiService {
     return Transaction.fromJson(result);
   }
 
-  /// Shows what splitting `transactionId` into weekly contributions to
+  /// Shows what splitting `transactionId` into period contributions to
   /// `contributorId` would look like -- e.g. a KSh 200 catch-up payment
   /// from someone who missed 2 weeks of a KSh 100 weekly amount. Read-only;
-  /// nothing is written until [splitIntoWeeks] is called.
-  Future<WeeklySplitPreview> getSplitPreview({
+  /// nothing is written until [splitIntoPeriods] is called.
+  Future<SplitPreview> getSplitPreview({
     required String transactionId,
     required String contributorId,
   }) async {
     final result = await _get(
       '/transactions/$transactionId/split-preview?contributor_id=$contributorId',
     );
-    return WeeklySplitPreview.fromJson(result as Map<String, dynamic>);
+    return SplitPreview.fromJson(result as Map<String, dynamic>);
   }
 
   /// Commits a split previewed via [getSplitPreview]: the original
   /// transaction becomes IGNORED and one new CONFIRMED transaction is
-  /// created per week it covers.
-  Future<WeeklySplitResult> splitIntoWeeks({
+  /// created per period it covers.
+  Future<SplitResult> splitIntoPeriods({
     required String transactionId,
     required String contributorId,
   }) async {
-    final result = await _post('/transactions/$transactionId/split-into-weeks', {
+    final result = await _post('/transactions/$transactionId/split-into-periods', {
       'contributor_id': contributorId,
     });
-    return WeeklySplitResult.fromJson(result as Map<String, dynamic>);
+    return SplitResult.fromJson(result as Map<String, dynamic>);
   }
 
   String _dateOnly(DateTime date) =>

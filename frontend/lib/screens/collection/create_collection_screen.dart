@@ -28,6 +28,7 @@ class _CreateCollectionScreenState extends State<CreateCollectionScreen> {
   late final TextEditingController _nameController;
   final _targetController = TextEditingController();
   DateTime _date = DateTime.now();
+  PeriodType _period = PeriodType.weekly;
   bool _submitting = false;
 
   @override
@@ -76,6 +77,7 @@ class _CreateCollectionScreenState extends State<CreateCollectionScreen> {
         name: _nameController.text.trim(),
         targetAmount: targetText.isEmpty ? null : int.parse(targetText),
         date: _type == CollectionType.harambee ? _date : null,
+        period: _period,
       );
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -151,6 +153,27 @@ class _CreateCollectionScreenState extends State<CreateCollectionScreen> {
                     onPressed: _pickDate,
                     icon: const Icon(Icons.calendar_today, size: 18),
                     label: Text(formatDate(_date)),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 20),
+                  const Text('How often does this group contribute?'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<PeriodType>(
+                    segments: const [
+                      ButtonSegment(value: PeriodType.weekly, label: Text('Weekly')),
+                      ButtonSegment(value: PeriodType.fortnightly, label: Text('Fortnightly')),
+                      ButtonSegment(value: PeriodType.monthly, label: Text('Monthly')),
+                    ],
+                    selected: {_period},
+                    onSelectionChanged: (s) => setState(() => _period = s.first),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Drives missing-period nudges, catch-up payment splitting, and '
+                    'weekly-amount pattern detection during bulk import.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                   ),
                 ],
                 const SizedBox(height: 32),

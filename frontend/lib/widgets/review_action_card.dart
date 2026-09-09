@@ -16,6 +16,7 @@ class ReviewActionCard extends StatefulWidget {
   final String collectionId;
   final Transaction transaction;
   final String? suggestedContributorName;
+  final PeriodType period;
   final void Function(Transaction updated) onResolved;
 
   const ReviewActionCard({
@@ -23,6 +24,7 @@ class ReviewActionCard extends StatefulWidget {
     required this.collectionId,
     required this.transaction,
     required this.suggestedContributorName,
+    required this.period,
     required this.onResolved,
   });
 
@@ -98,18 +100,19 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
     if (picked != null) setState(() => _overrideDate = picked);
   }
 
-  /// Handles a catch-up payment covering more than one week (e.g. KSh 200
+  /// Handles a catch-up payment covering more than one period (e.g. KSh 200
   /// from someone who missed 2 weeks of a KSh 100 weekly amount): preview
-  /// the week-by-week split the backend would make, let the human confirm
-  /// it, then commit. If the amount doesn't actually cover more than one
-  /// week (or there's no way to tell what one week is worth), the backend
-  /// says so and that's shown as a plain error -- there's nothing to split.
-  Future<void> _splitAcrossWeeks(BuildContext context, ApiService api) async {
+  /// the period-by-period split the backend would make, let the human
+  /// confirm it, then commit. If the amount doesn't actually cover more
+  /// than one period (or there's no way to tell what one period is worth),
+  /// the backend says so and that's shown as a plain error -- there's
+  /// nothing to split.
+  Future<void> _splitAcrossPeriods(BuildContext context, ApiService api) async {
     final contributorId = widget.transaction.matchedContributorId;
     if (contributorId == null) return;
 
     setState(() => _busy = true);
-    WeeklySplitPreview preview;
+    SplitPreview preview;
     try {
       preview = await api.getSplitPreview(
         transactionId: widget.transaction.id,
@@ -128,13 +131,14 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
       builder: (_) => _SplitPreviewDialog(
         preview: preview,
         contributorName: widget.suggestedContributorName ?? widget.transaction.senderName,
+        period: widget.period,
       ),
     );
     if (confirmed != true || !context.mounted) return;
 
     setState(() => _busy = true);
     try {
-      final result = await api.splitIntoWeeks(
+      final result = await api.splitIntoPeriods(
         transactionId: widget.transaction.id,
         contributorId: contributorId,
       );
@@ -143,7 +147,7 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Split into ${result.createdTransactions.length} weekly contributions.',
+              'Split into ${result.createdTransactions.length} contributions.',
             ),
           ),
         );
@@ -255,9 +259,9 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: () => _splitAcrossWeeks(context, api),
+                        onPressed: () => _splitAcrossPeriods(context, api),
                         icon: const Icon(Icons.call_split, size: 18),
-                        label: const Text('Split into weekly contributions'),
+                        label: const Text('Split into multiple contributions'),
                       ),
                     ),
                   ],
@@ -396,28 +400,45 @@ class _Field extends StatelessWidget {
   }
 }
 
-/// Shows the exact week-by-week breakdown a split would produce (computed
-/// server-side -- see ApiService.getSplitPreview) and lets the human
-/// confirm or back out before anything is written.
+/// Shows the exact period-by-period breakdown a split would produce
+/// (computed server-side -- see ApiService.getSplitPreview) and lets the
+/// human confirm or back out before anything is written.
 class _SplitPreviewDialog extends StatelessWidget {
-  final WeeklySplitPreview preview;
+  final SplitPreview preview;
   final String contributorName;
+  final PeriodType period;
 
-  const _SplitPreviewDialog({required this.preview, required this.contributorName});
+  const _SplitPreviewDialog({
+    required this.preview,
+    required this.contributorName,
+    required this.period,
+  });
+
+  String get _periodWord => switch (period) {
+        PeriodType.fortnightly => 'fortnightly',
+        PeriodType.monthly => 'monthly',
+        PeriodType.weekly || PeriodType.unknown => 'weekly',
+      };
+
+  String get _periodLabel => switch (period) {
+        PeriodType.fortnightly => 'Fortnight',
+        PeriodType.monthly => 'Month',
+        PeriodType.weekly || PeriodType.unknown => 'Week',
+      };
 
   @override
   Widget build(BuildContext context) {
     final total = preview.installments.fold<int>(0, (sum, i) => sum + i.amount);
     return AlertDialog(
-      title: const Text('Split into weekly contributions'),
+      title: const Text('Split into multiple contributions'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Based on $contributorName\'s usual weekly amount of '
-              '${formatKsh(preview.weeklyAmount)}, this payment covers:',
+              'Based on $contributorName\'s usual $_periodWord amount of '
+              '${formatKsh(preview.periodAmount)}, this payment covers:',
             ),
             const SizedBox(height: 12),
             ...preview.installments.map(
@@ -426,7 +447,7 @@ class _SplitPreviewDialog extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Week of ${formatDate(i.weekStart)}'),
+                    Text('$_periodLabel of ${formatDate(i.periodStart)}'),
                     Text(formatKsh(i.amount), style: const TextStyle(fontWeight: FontWeight.w600)),
                   ],
                 ),

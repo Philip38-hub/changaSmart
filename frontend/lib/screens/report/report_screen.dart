@@ -37,11 +37,11 @@ class _ReportScreenState extends State<ReportScreen> {
           IconButton(
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (_) => WeeklyReportScreen(api: widget.api, collectionId: widget.collectionId),
+                builder: (_) => PeriodReportScreen(api: widget.api, collectionId: widget.collectionId),
               ),
             ),
             icon: const Icon(Icons.calendar_month_outlined),
-            tooltip: 'Weekly breakdown',
+            tooltip: 'Period breakdown',
           ),
         ],
       ),

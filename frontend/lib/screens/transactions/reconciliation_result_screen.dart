@@ -28,11 +28,12 @@ class _ReconciliationResultScreenState extends State<ReconciliationResultScreen>
   final Set<String> _resolvedIds = {};
 
   Future<_ResultData> _load() async {
+    final collection = await widget.api.getCollection(widget.collectionId);
     final transactions = await widget.api.listTransactions(widget.collectionId);
     final report = await widget.api.getReport(widget.collectionId);
     final txById = {for (final t in transactions) t.id: t};
     final names = {for (final e in report.contributorBreakdown) e.contributorId: e.name};
-    return _ResultData(transactionsById: txById, contributorNames: names);
+    return _ResultData(transactionsById: txById, contributorNames: names, period: collection.period);
   }
 
   @override
@@ -63,6 +64,7 @@ class _ReconciliationResultScreenState extends State<ReconciliationResultScreen>
                         collectionId: widget.collectionId,
                         decision: d,
                         transaction: txn,
+                        period: data.period,
                       );
                     }),
                     const SizedBox(height: 24),
@@ -88,6 +90,7 @@ class _ReconciliationResultScreenState extends State<ReconciliationResultScreen>
                           collectionId: widget.collectionId,
                           transaction: txn,
                           suggestedContributorName: suggestedName,
+                          period: data.period,
                           onResolved: (_) => setState(() => _resolvedIds.add(d.transactionId)),
                         ),
                       );
@@ -112,7 +115,8 @@ class _ReconciliationResultScreenState extends State<ReconciliationResultScreen>
 class _ResultData {
   final Map<String, Transaction> transactionsById;
   final Map<String, String> contributorNames;
-  _ResultData({required this.transactionsById, required this.contributorNames});
+  final PeriodType period;
+  _ResultData({required this.transactionsById, required this.contributorNames, required this.period});
 }
 
 class _AutoMatchedCard extends StatefulWidget {
@@ -120,12 +124,14 @@ class _AutoMatchedCard extends StatefulWidget {
   final String collectionId;
   final ReconciliationDecision decision;
   final Transaction? transaction;
+  final PeriodType period;
 
   const _AutoMatchedCard({
     required this.api,
     required this.collectionId,
     required this.decision,
     required this.transaction,
+    required this.period,
   });
 
   @override
@@ -133,7 +139,7 @@ class _AutoMatchedCard extends StatefulWidget {
 }
 
 class _AutoMatchedCardState extends State<_AutoMatchedCard> {
-  List<DateTime>? _missingWeeks;
+  List<DateTime>? _missingPeriods;
   DateTime? _movedTo;
   bool _busy = false;
 
@@ -143,25 +149,25 @@ class _AutoMatchedCardState extends State<_AutoMatchedCard> {
     final contributorId = widget.decision.suggestedContributorId;
     if (contributorId == null) return;
     widget.api
-        .getMissingWeeks(collectionId: widget.collectionId, contributorId: contributorId)
-        .then((weeks) {
-      if (mounted) setState(() => _missingWeeks = weeks);
+        .getMissingPeriods(collectionId: widget.collectionId, contributorId: contributorId)
+        .then((periods) {
+      if (mounted) setState(() => _missingPeriods = periods);
     }).catchError((_) {
       // Best-effort nudge only -- if this fails, just don't show it.
-      if (mounted) setState(() => _missingWeeks = const []);
+      if (mounted) setState(() => _missingPeriods = const []);
     });
   }
 
-  Future<void> _moveTo(DateTime weekStart) async {
+  Future<void> _moveTo(DateTime periodStart) async {
     final txn = widget.transaction;
     if (txn == null) return;
     setState(() => _busy = true);
     try {
       await widget.api.setTransactionEffectiveDate(
         transactionId: txn.id,
-        effectiveDate: weekStart,
+        effectiveDate: periodStart,
       );
-      if (mounted) setState(() => _movedTo = weekStart);
+      if (mounted) setState(() => _movedTo = periodStart);
     } catch (e) {
       if (mounted && context.mounted) showErrorSnackBar(context, e);
     } finally {
@@ -169,20 +175,38 @@ class _AutoMatchedCardState extends State<_AutoMatchedCard> {
     }
   }
 
-  Future<void> _pickDifferentWeek(BuildContext context) async {
+  Future<void> _pickDifferentPeriod(BuildContext context) async {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: _missingWeeks?.first ?? now,
+      initialDate: _missingPeriods?.first ?? now,
       firstDate: DateTime(now.year - 2),
       lastDate: now,
-      helpText: 'Which week should this count toward?',
+      helpText: 'Which $_periodWord should this count toward?',
     );
     if (picked != null) await _moveTo(picked);
   }
 
-  String _weekRangeLabel(DateTime start) {
-    final end = start.add(const Duration(days: 6));
+  String get _periodWord => switch (widget.period) {
+        PeriodType.fortnightly => 'fortnight',
+        PeriodType.monthly => 'month',
+        PeriodType.weekly || PeriodType.unknown => 'week',
+      };
+
+  DateTime _periodEnd(DateTime start) {
+    switch (widget.period) {
+      case PeriodType.fortnightly:
+        return start.add(const Duration(days: 13));
+      case PeriodType.monthly:
+        return DateTime(start.year, start.month + 1, 1).subtract(const Duration(days: 1));
+      case PeriodType.weekly:
+      case PeriodType.unknown:
+        return start.add(const Duration(days: 6));
+    }
+  }
+
+  String _periodRangeLabel(DateTime start) {
+    final end = _periodEnd(start);
     String two(int n) => n.toString().padLeft(2, '0');
     return '${two(start.day)}/${two(start.month)} - ${two(end.day)}/${two(end.month)}';
   }
@@ -192,8 +216,8 @@ class _AutoMatchedCardState extends State<_AutoMatchedCard> {
     final theme = Theme.of(context);
     final decision = widget.decision;
     final transaction = widget.transaction;
-    final missingWeeks = _missingWeeks;
-    final showGapNudge = _movedTo == null && missingWeeks != null && missingWeeks.isNotEmpty;
+    final missingPeriods = _missingPeriods;
+    final showGapNudge = _movedTo == null && missingPeriods != null && missingPeriods.isNotEmpty;
 
     return Card(
       color: AppColors.confirmed.withValues(alpha: 0.06),
@@ -236,15 +260,15 @@ class _AutoMatchedCardState extends State<_AutoMatchedCard> {
             if (_movedTo != null) ...[
               const SizedBox(height: 10),
               Text(
-                'Recorded for the week of ${_weekRangeLabel(_movedTo!)}',
+                'Recorded for the $_periodWord of ${_periodRangeLabel(_movedTo!)}',
                 style: theme.textTheme.bodySmall?.copyWith(color: AppColors.confirmed, fontWeight: FontWeight.w600),
               ),
             ] else if (showGapNudge) ...[
               const Divider(height: 20),
               Text(
-                '${decision.paidBy ?? 'This contributor'} is missing the week of '
-                '${_weekRangeLabel(missingWeeks.first)}. Recorded so far for the '
-                'week of ${transaction != null ? _weekRangeLabel(transaction.timestamp) : '-'}.',
+                '${decision.paidBy ?? 'This contributor'} is missing the $_periodWord of '
+                '${_periodRangeLabel(missingPeriods.first)}. Recorded so far for the '
+                '$_periodWord of ${transaction != null ? _periodRangeLabel(transaction.timestamp) : '-'}.',
                 style: theme.textTheme.bodySmall,
               ),
               const SizedBox(height: 8),
@@ -256,12 +280,12 @@ class _AutoMatchedCardState extends State<_AutoMatchedCard> {
                   runSpacing: 8,
                   children: [
                     FilledButton.tonal(
-                      onPressed: () => _moveTo(missingWeeks.first),
-                      child: Text('Move to week of ${_weekRangeLabel(missingWeeks.first)}'),
+                      onPressed: () => _moveTo(missingPeriods.first),
+                      child: Text('Move to $_periodWord of ${_periodRangeLabel(missingPeriods.first)}'),
                     ),
                     OutlinedButton(
-                      onPressed: () => _pickDifferentWeek(context),
-                      child: const Text('Choose a different week'),
+                      onPressed: () => _pickDifferentPeriod(context),
+                      child: Text('Choose a different $_periodWord'),
                     ),
                   ],
                 ),
