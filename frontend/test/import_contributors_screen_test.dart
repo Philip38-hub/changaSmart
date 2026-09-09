@@ -123,4 +123,95 @@ void main() {
     expect((body['contributors'] as List), hasLength(1));
     expect((body['contributors'] as List).single['name'], 'Apilo');
   });
+
+  testWidgets('accepting the detected weekly target applies it to rows with no amount of their own', (tester) async {
+    http.Request? bulkRequest;
+    final api = ApiService(
+      baseUrl: 'http://test.local',
+      client: MockClient((request) async {
+        if (request.method == 'GET' && request.url.path.endsWith('/contributors')) {
+          return _json([]);
+        }
+        if (request.method == 'POST' && request.url.path.endsWith('/contributors/bulk')) {
+          bulkRequest = request;
+          return _json({
+            'created': [_contributorJson('Apilo'), _contributorJson('Omosh')],
+            'skipped_names': [],
+          });
+        }
+        return _json({}, statusCode: 404);
+      }),
+    );
+
+    await _pushImportScreen(tester, api);
+
+    await tester.enterText(
+      find.byType(TextField),
+      'Week 1 17/08/26\n1. Apilo-100\n2. Omosh-100\n'
+      'Week 2 24/08/26\n1. Apilo-100\n2. Omosh-100',
+    );
+    await tester.pump();
+    await tester.tap(find.text('Parse'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('contributes KSh 100 weekly'), findsOneWidget);
+
+    await tester.tap(find.text('Set KSh 100 as target'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('will be applied to'), findsOneWidget);
+
+    await tester.tap(find.text('Import (2)'));
+    await tester.pumpAndSettle();
+
+    expect(bulkRequest, isNotNull);
+    final body = jsonDecode(bulkRequest!.body) as Map<String, dynamic>;
+    final contributors = body['contributors'] as List;
+    expect(contributors[0]['expected_amount'], 100);
+    expect(contributors[1]['expected_amount'], 100);
+  });
+
+  testWidgets('declining the detected weekly target leaves rows with no amount', (tester) async {
+    http.Request? bulkRequest;
+    final api = ApiService(
+      baseUrl: 'http://test.local',
+      client: MockClient((request) async {
+        if (request.method == 'GET' && request.url.path.endsWith('/contributors')) {
+          return _json([]);
+        }
+        if (request.method == 'POST' && request.url.path.endsWith('/contributors/bulk')) {
+          bulkRequest = request;
+          return _json({
+            'created': [_contributorJson('Apilo'), _contributorJson('Omosh')],
+            'skipped_names': [],
+          });
+        }
+        return _json({}, statusCode: 404);
+      }),
+    );
+
+    await _pushImportScreen(tester, api);
+
+    await tester.enterText(
+      find.byType(TextField),
+      'Week 1 17/08/26\n1. Apilo-100\n2. Omosh-100\n'
+      'Week 2 24/08/26\n1. Apilo-100\n2. Omosh-100',
+    );
+    await tester.pump();
+    await tester.tap(find.text('Parse'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('No thanks'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('contributes KSh 100 weekly'), findsNothing);
+
+    await tester.tap(find.text('Import (2)'));
+    await tester.pumpAndSettle();
+
+    final body = jsonDecode(bulkRequest!.body) as Map<String, dynamic>;
+    final contributors = body['contributors'] as List;
+    expect(contributors[0].containsKey('expected_amount'), isFalse);
+    expect(contributors[1].containsKey('expected_amount'), isFalse);
+  });
 }

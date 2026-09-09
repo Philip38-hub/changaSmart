@@ -28,6 +28,8 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
   final Set<int> _excludedIndices = {};
   bool _includeHistorical = false;
   bool _importing = false;
+  int? _weeklyTargetToApply;
+  bool _weeklyTargetPromptDismissed = false;
 
   @override
   void initState() {
@@ -60,6 +62,8 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
       _parsed = result;
       _excludedIndices.clear();
       _includeHistorical = false;
+      _weeklyTargetToApply = null;
+      _weeklyTargetPromptDismissed = false;
     });
   }
 
@@ -85,7 +89,14 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
         collectionId: widget.collectionId,
         rows: [
           for (final row in selected)
-            (name: row.name, expectedAmount: row.expectedAmount, phone: row.phone),
+            (
+              name: row.name,
+              // A row's own explicit amount (from a CSV column) always
+              // wins; the detected weekly target only fills in for rows
+              // that don't have one.
+              expectedAmount: row.expectedAmount ?? _weeklyTargetToApply,
+              phone: row.phone,
+            ),
         ],
       );
 
@@ -226,6 +237,70 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
             ],
           ),
         ),
+        if (parsed.detectedWeeklyAmount != null &&
+            _weeklyTargetToApply == null &&
+            !_weeklyTargetPromptDismissed)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Card(
+              color: AppColors.confirmed.withValues(alpha: 0.06),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: AppColors.confirmed.withValues(alpha: 0.3)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Looks like this group contributes '
+                      '${formatKsh(parsed.detectedWeeklyAmount!)} weekly. Set '
+                      'this as everyone\'s expected weekly amount?',
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => setState(() => _weeklyTargetPromptDismissed = true),
+                          child: const Text('No thanks'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.tonal(
+                          onPressed: () => setState(
+                            () => _weeklyTargetToApply = parsed.detectedWeeklyAmount,
+                          ),
+                          child: Text('Set ${formatKsh(parsed.detectedWeeklyAmount!)} as target'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        if (_weeklyTargetToApply != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle, size: 16, color: AppColors.confirmed),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${formatKsh(_weeklyTargetToApply!)} weekly target will be applied to '
+                    'contributors without one.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => setState(() => _weeklyTargetToApply = null),
+                  child: const Text('Undo'),
+                ),
+              ],
+            ),
+          ),
         if (parsed.hasWeeklyData)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -248,6 +323,7 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
               final row = parsed.contributors[index];
               final isDuplicate = existing.contains(row.name.trim().toLowerCase());
               final excluded = _excludedIndices.contains(index);
+              final effectiveAmount = row.expectedAmount ?? _weeklyTargetToApply;
               return Card(
                 margin: const EdgeInsets.only(bottom: 8),
                 shape: RoundedRectangleBorder(
@@ -267,7 +343,7 @@ class _ImportContributorsScreenState extends State<ImportContributorsScreen> {
                   subtitle: Wrap(
                     spacing: 8,
                     children: [
-                      if (row.expectedAmount != null) Text('Expected ${formatKsh(row.expectedAmount!)}'),
+                      if (effectiveAmount != null) Text('Expected ${formatKsh(effectiveAmount)}'),
                       if (isDuplicate)
                         Text(
                           'Already in this list',

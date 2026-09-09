@@ -42,10 +42,19 @@ class ContributorListParseResult {
   final List<ParsedWeeklyEntry> weeklyEntries;
   final bool hasWeeklyData;
 
+  /// If a clear majority of the per-week amounts in the paste agree on one
+  /// figure (e.g. everyone paying KSh 100 most weeks), this is very likely
+  /// the group's actual weekly contribution -- even though no one ever
+  /// set an expected_amount explicitly (bulk-imported contributors
+  /// deliberately don't get one, see ContributorListParser). Null when
+  /// there's no weekly data, too little of it, or no clear agreement.
+  final int? detectedWeeklyAmount;
+
   ContributorListParseResult({
     required this.contributors,
     required this.weeklyEntries,
     required this.hasWeeklyData,
+    this.detectedWeeklyAmount,
   });
 }
 
@@ -126,7 +135,22 @@ class ContributorListParser {
       contributors: contributors,
       weeklyEntries: weeklyEntries,
       hasWeeklyData: hasWeeklyData,
+      detectedWeeklyAmount: _detectCommonWeeklyAmount(weeklyEntries),
     );
+  }
+
+  /// A clear majority (>=60%) of the recorded weekly amounts agreeing on
+  /// one figure is treated as the group's real weekly contribution.
+  /// Requires at least a couple of data points so a single contributor's
+  /// one-off week can't be mistaken for a group-wide pattern.
+  static int? _detectCommonWeeklyAmount(List<ParsedWeeklyEntry> entries) {
+    if (entries.length < 2) return null;
+    final counts = <int, int>{};
+    for (final entry in entries) {
+      counts[entry.amount] = (counts[entry.amount] ?? 0) + 1;
+    }
+    final mostCommon = counts.entries.reduce((a, b) => a.value >= b.value ? a : b);
+    return mostCommon.value / entries.length >= 0.6 ? mostCommon.key : null;
   }
 
   static ({String name, int? csvAmount, int? dashAmount, String? phone})

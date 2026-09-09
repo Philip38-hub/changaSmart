@@ -201,5 +201,52 @@ Total: ksh.1000
       final sortedWeeks = totalsByWeek.keys.toList()..sort();
       expect(sortedWeeks.map((w) => totalsByWeek[w]).toList(), [400, 300, 200, 100]);
     });
+
+    test('detects KSh 100 as the group\'s common weekly amount', () {
+      final result = ContributorListParser.parse(list);
+      expect(result.detectedWeeklyAmount, 100);
+    });
+  });
+
+  group('detecting a common weekly amount', () {
+    test('no weekly data at all -- nothing to detect', () {
+      final result = ContributorListParser.parse('Apilo\nOmosh');
+      expect(result.detectedWeeklyAmount, isNull);
+    });
+
+    test('a single week entry is not enough of a pattern', () {
+      final result = ContributorListParser.parse('Week 1 17/08/26\n1. Apilo-100');
+      expect(result.detectedWeeklyAmount, isNull);
+    });
+
+    test('a clear majority across mixed amounts is still detected', () {
+      const mixed = '''
+Week 1 17/08/26
+1. Apilo-100
+2. Omosh-100
+3. Esco-150
+
+Week 2 24/08/26
+1. Apilo-100
+2. Omosh-100
+3. Esco-100
+''';
+      final result = ContributorListParser.parse(mixed);
+      expect(result.detectedWeeklyAmount, 100);
+    });
+
+    test('no clear majority -- amounts too evenly split', () {
+      const evenlySplit = '''
+Week 1 17/08/26
+1. Apilo-100
+2. Omosh-200
+
+Week 2 24/08/26
+1. Apilo-100
+2. Omosh-200
+''';
+      final result = ContributorListParser.parse(evenlySplit);
+      expect(result.detectedWeeklyAmount, isNull);
+    });
   });
 }
