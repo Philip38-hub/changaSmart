@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from strands import tool
 
-from app.repositories.memory import store
+from app.repositories.store import store
 
 
 @tool

@@ -1,9 +1,11 @@
 """Simple in-process, in-memory repository implementations.
 
-Good enough for a hackathon demo and for tests. Not thread-safe across
-multiple Lambda execution environments -- that's expected; DynamoDB (or
-similar) replaces this module later without any change to callers, since
-they only ever depend on the interfaces in `base.py`.
+Used directly by the test suite (see tests/conftest.py's reset_store
+fixture) for a fast, fully isolated store per test. The actual running app
+uses app.repositories.store instead (SQLite-backed, so state survives a
+restart) -- these two are kept separate so tests never depend on a file on
+disk. Not thread-safe across multiple Lambda execution environments --
+that's expected for the test-only role this now plays.
 """
 
 from __future__ import annotations
@@ -106,8 +108,9 @@ class InMemoryTransactionRepository(TransactionRepository):
 
 
 class InMemoryStore:
-    """Bundles all four repositories behind one object so the rest of the
-    app has a single dependency to import/inject."""
+    """Bundles all four repositories behind one object -- used by tests
+    (see tests/conftest.py). The live app's singleton lives in
+    app.repositories.store instead."""
 
     def __init__(self) -> None:
         self.projects = InMemoryProjectRepository()
@@ -116,6 +119,7 @@ class InMemoryStore:
         self.transactions = InMemoryTransactionRepository()
 
 
-# Process-wide singleton. Fine for a single Lambda execution environment /
-# a single local dev server; revisit when DynamoDB is introduced.
+# Test-only singleton -- tests/conftest.py's reset_store fixture replaces
+# its four attributes before every test. The live app does not use this;
+# see app.repositories.store for that.
 store = InMemoryStore()

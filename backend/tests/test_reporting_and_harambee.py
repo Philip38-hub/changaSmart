@@ -13,7 +13,7 @@ from app.models import (
 from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.services.reporting import generate_collection_report
-from app.repositories.memory import store
+from app.repositories.store import store
 
 
 def _txn(collection_id, mpesa_code, sender_name, amount):

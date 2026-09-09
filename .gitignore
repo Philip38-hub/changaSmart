@@ -27,3 +27,6 @@ dist/
 
 # Logs
 *.log
+
+# Local SQLite database (app.repositories.store)
+*.db

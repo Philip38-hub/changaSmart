@@ -9,21 +9,12 @@ chain (env vars, shared config, instance/task role, etc.) is used as-is.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    # "mock" (default): ambiguous-case reasoning is simulated deterministically
-    # -- no AWS/Bedrock call at all. Lets the API, and a future frontend, be
-    # developed and tested without depending on Bedrock quota/access.
-    # "bedrock": use the real Strands Agent + Amazon Bedrock.
-    # Either way, exact/near-exact matches are still resolved deterministically
-    # and never involve this setting.
-    agent_mode: Literal["mock", "bedrock"] = "mock"
 
     aws_region: str = "us-east-1"
     bedrock_model_id: str = "amazon.nova-micro-v1:0"
@@ -45,6 +36,12 @@ class Settings(BaseSettings):
 
     app_name: str = "ChangaSmart"
     log_level: str = "INFO"
+
+    # SQLite file backing app.repositories.store -- survives a process
+    # restart, unlike the in-memory repositories (which tests still use
+    # directly, see tests/conftest.py). Relative to the working directory
+    # the app is launched from (typically backend/).
+    database_path: str = "changasmart.db"
 
 
 @lru_cache

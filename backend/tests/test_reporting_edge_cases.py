@@ -118,7 +118,7 @@ def test_report_reflects_closed_collection_status():
         project.id, CollectionType.HARAMBEE, "Harambee #1", target_amount=50000
     )
     collection.status = CollectionStatus.CLOSED
-    from app.repositories.memory import store
+    from app.repositories.store import store
 
     store.collections.update(collection)
 
