@@ -34,6 +34,9 @@ from app.models import (
     TransactionCandidate,
     TransactionStatus,
     WeeklyCollectionReport,
+    WeeklySplitInstallment,
+    WeeklySplitPreview,
+    WeeklySplitResult,
 )
 from app.repositories.store import store
 from app.services import reconciliation as reconciliation_service
@@ -114,6 +117,10 @@ class ManualContributionRequest(BaseModel):
 
 class EffectiveDateRequest(BaseModel):
     effective_date: dt.date
+
+
+class SplitContributorRequest(BaseModel):
+    contributor_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +351,57 @@ def set_transaction_effective_date(
         raise HTTPException(status_code=404, detail="Transaction not found")
     transaction.effective_date = payload.effective_date
     return store.transactions.update(transaction)
+
+
+@app.get(
+    "/transactions/{transaction_id}/split-preview",
+    response_model=WeeklySplitPreview,
+)
+def preview_split(transaction_id: str, contributor_id: str) -> WeeklySplitPreview:
+    """Read-only: shows what splitting this transaction into weekly
+    contributions to `contributor_id` would look like (which weeks, how
+    much each) -- e.g. a KSh 200 payment from someone who missed 2 weeks
+    of a KSh 100 weekly amount. Nothing is written until the human confirms
+    via the POST endpoint below."""
+    if store.transactions.get(transaction_id) is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if store.contributors.get(contributor_id) is None:
+        raise HTTPException(status_code=404, detail="Contributor not found")
+    weekly_amount, plan = reconciliation_service.preview_weekly_split(
+        transaction_id, contributor_id
+    )
+    return WeeklySplitPreview(
+        contributor_id=contributor_id,
+        weekly_amount=weekly_amount,
+        installments=[
+            WeeklySplitInstallment(
+                week_start=week, week_end=week + dt.timedelta(days=6), amount=amount
+            )
+            for week, amount in plan
+        ],
+    )
+
+
+@app.post(
+    "/transactions/{transaction_id}/split-into-weeks",
+    response_model=WeeklySplitResult,
+)
+def split_into_weeks(
+    transaction_id: str, payload: SplitContributorRequest
+) -> WeeklySplitResult:
+    """Commit a multi-week catch-up payment split (see the preview endpoint
+    above): the original transaction is marked IGNORED and one new
+    CONFIRMED transaction is created per week it covers, so the money is
+    counted once, against the right weeks, without ever touching the real
+    M-PESA message it came from."""
+    if store.transactions.get(transaction_id) is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if store.contributors.get(payload.contributor_id) is None:
+        raise HTTPException(status_code=404, detail="Contributor not found")
+    original, created = reconciliation_service.split_transaction_across_weeks(
+        transaction_id, payload.contributor_id
+    )
+    return WeeklySplitResult(original_transaction=original, created_transactions=created)
 
 
 @app.get("/collections/{collection_id}/report", response_model=CollectionReport)

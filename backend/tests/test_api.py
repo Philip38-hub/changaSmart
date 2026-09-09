@@ -547,3 +547,125 @@ def test_set_effective_date_unknown_transaction_returns_404():
         json={"effective_date": "2026-08-24"},
     )
     assert response.status_code == 404
+
+
+def test_split_catch_up_payment_over_http():
+    project = client.post("/projects", json={"name": "Split Fund"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    mose = client.post(
+        f"/collections/{collection['id']}/contributors", json={"name": "Mose"}
+    ).json()
+    client.post(
+        f"/collections/{collection['id']}/contributors/{mose['id']}/manual-contributions",
+        json={"amount": 100, "timestamp": "2026-08-17T10:00:00Z"},
+    )
+
+    catch_up = client.post(
+        f"/collections/{collection['id']}/transactions",
+        json={
+            "mpesa_code": "API200",
+            "sender_name": "mose the great",
+            "amount": 200,
+            "timestamp": "2026-09-01T10:00:00Z",
+        },
+    ).json()
+
+    preview = client.get(
+        f"/transactions/{catch_up['id']}/split-preview",
+        params={"contributor_id": mose["id"]},
+    )
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["weekly_amount"] == 100
+    assert [i["amount"] for i in body["installments"]] == [100, 100]
+    assert [i["week_start"] for i in body["installments"]] == ["2026-08-24", "2026-08-31"]
+
+    result = client.post(
+        f"/transactions/{catch_up['id']}/split-into-weeks",
+        json={"contributor_id": mose["id"]},
+    )
+    assert result.status_code == 200
+    body = result.json()
+    assert body["original_transaction"]["status"] == "IGNORED"
+    assert len(body["created_transactions"]) == 2
+    assert [t["amount"] for t in body["created_transactions"]] == [100, 100]
+    assert all(t["status"] == "CONFIRMED" for t in body["created_transactions"])
+
+    weekly = client.get(f"/collections/{collection['id']}/report/weekly").json()
+    assert [w["weekly_total"] for w in weekly["weeks"]] == [100, 100, 100]
+    assert weekly["grand_total"] == 300
+
+    contributors = client.get(f"/collections/{collection['id']}/contributors").json()
+    mose_now = next(c for c in contributors if c["id"] == mose["id"])
+    assert "mose the great" in mose_now["aliases"]
+
+
+def test_split_preview_unknown_transaction_returns_404():
+    project = client.post("/projects", json={"name": "Split Fund 2"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    mose = client.post(
+        f"/collections/{collection['id']}/contributors", json={"name": "Mose"}
+    ).json()
+
+    response = client.get(
+        "/transactions/txn_does_not_exist/split-preview",
+        params={"contributor_id": mose["id"]},
+    )
+    assert response.status_code == 404
+
+
+def test_split_into_weeks_unknown_contributor_returns_404():
+    project = client.post("/projects", json={"name": "Split Fund 3"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    txn = client.post(
+        f"/collections/{collection['id']}/transactions",
+        json={
+            "mpesa_code": "API201",
+            "sender_name": "Someone",
+            "amount": 200,
+            "timestamp": "2026-09-01T10:00:00Z",
+        },
+    ).json()
+
+    response = client.post(
+        f"/transactions/{txn['id']}/split-into-weeks",
+        json={"contributor_id": "contrib_missing"},
+    )
+    assert response.status_code == 404
+
+
+def test_split_single_week_amount_returns_400_over_http():
+    project = client.post("/projects", json={"name": "Split Fund 4"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    mose = client.post(
+        f"/collections/{collection['id']}/contributors",
+        json={"name": "Mose", "expected_amount": 100},
+    ).json()
+    txn = client.post(
+        f"/collections/{collection['id']}/transactions",
+        json={
+            "mpesa_code": "API202",
+            "sender_name": "Mose",
+            "amount": 100,
+            "timestamp": "2026-09-01T10:00:00Z",
+        },
+    ).json()
+
+    response = client.get(
+        f"/transactions/{txn['id']}/split-preview",
+        params={"contributor_id": mose["id"]},
+    )
+    assert response.status_code == 400
+    assert "nothing to split" in response.json()["detail"]

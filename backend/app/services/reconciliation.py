@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import uuid
+from collections import Counter
 from difflib import SequenceMatcher
 
 from app.models import (
@@ -26,6 +27,7 @@ from app.models import (
     TransactionStatus,
 )
 from app.repositories.store import store
+from app.services.reporting import find_missing_weeks, generate_weekly_report
 
 # A near-exact name match, combined with a consistent (or absent) expected
 # amount, is trusted enough to auto-confirm without involving the LLM.
@@ -176,6 +178,155 @@ def record_manual_contribution(
         review_reason="Manually recorded historical contribution.",
     )
     return store.transactions.create(transaction)
+
+
+def _infer_weekly_amount(
+    collection_id: str, contributor: Contributor, transaction: Transaction
+) -> int | None:
+    """What one week's contribution is worth for this contributor, for
+    splitting purposes. A contributor rarely has an explicit
+    expected_amount in practice (bulk-imported lists deliberately don't
+    set one -- see setup.bulk_create_contributors), so this falls back to
+    real recorded behaviour: this contributor's own most recent confirmed
+    payment, or -- if they have none on record -- the most common
+    confirmed single payment across the collection (e.g. everyone else's
+    established weekly amount)."""
+    if contributor.expected_amount:
+        return contributor.expected_amount
+
+    confirmed = [
+        t
+        for t in store.transactions.list_by_collection(collection_id)
+        if t.status == TransactionStatus.CONFIRMED and t.id != transaction.id
+    ]
+
+    own_history = [t for t in confirmed if t.matched_contributor_id == contributor.id]
+    if own_history:
+        return max(own_history, key=lambda t: t.timestamp).amount
+
+    if confirmed:
+        return Counter(t.amount for t in confirmed).most_common(1)[0][0]
+
+    return None
+
+
+def _plan_weekly_split(
+    collection_id: str, contributor: Contributor, transaction: Transaction
+) -> tuple[int, list[tuple[dt.date, int]]]:
+    """Decide what one week is worth for this contributor and which weeks
+    a multi-week catch-up payment should cover. Full weekly amounts fill
+    the contributor's earliest missing weeks first (see find_missing_weeks);
+    a leftover partial amount, if any, lands on the last (most recent) week
+    assigned. If there are more installments than known missing weeks,
+    the remainder continue chronologically after the collection's latest
+    known week, so they never collide with a week someone already has a
+    confirmed payment for."""
+    weekly = _infer_weekly_amount(collection_id, contributor, transaction)
+    if weekly is None or weekly <= 0:
+        raise ValueError(
+            f"Can't tell what one week is worth for {contributor.name} -- "
+            "they have no expected amount set and no payment history to "
+            "infer it from."
+        )
+
+    full_weeks, remainder = divmod(transaction.amount, weekly)
+    amounts = [weekly] * full_weeks
+    if remainder:
+        amounts.append(remainder)
+    if len(amounts) < 2:
+        raise ValueError(
+            f"KSh {transaction.amount} does not cover more than one week of "
+            f"{contributor.name}'s KSh {weekly} weekly amount -- nothing to split."
+        )
+
+    missing = find_missing_weeks(collection_id, contributor.id)
+    known_weeks = [w.week_start for w in generate_weekly_report(collection_id).weeks]
+
+    weeks = list(missing[: len(amounts)])
+    cursor = (
+        max(known_weeks)
+        if known_weeks
+        else (transaction.effective_date or transaction.timestamp.date())
+        - dt.timedelta(days=(transaction.effective_date or transaction.timestamp.date()).weekday())
+        - dt.timedelta(weeks=1)
+    )
+    while len(weeks) < len(amounts):
+        cursor = cursor + dt.timedelta(weeks=1)
+        if cursor not in weeks:
+            weeks.append(cursor)
+
+    return weekly, list(zip(weeks, amounts))
+
+
+def preview_weekly_split(
+    transaction_id: str, contributor_id: str
+) -> tuple[int, list[tuple[dt.date, int]]]:
+    """Read-only: what split_transaction_across_weeks would do, without
+    writing anything -- lets the UI show the exact week/amount breakdown
+    before a human commits to it."""
+    transaction = store.transactions.get(transaction_id)
+    if transaction is None:
+        raise ValueError(f"Unknown transaction: {transaction_id}")
+    contributor = store.contributors.get(contributor_id)
+    if contributor is None:
+        raise ValueError(f"Unknown contributor: {contributor_id}")
+    return _plan_weekly_split(transaction.collection_id, contributor, transaction)
+
+
+def split_transaction_across_weeks(
+    transaction_id: str, contributor_id: str
+) -> tuple[Transaction, list[Transaction]]:
+    """Split a single catch-up payment (e.g. KSh 200 covering 2 missed
+    weeks of a KSh 100 weekly amount) into one CONFIRMED transaction per
+    week it actually covers. The original transaction is marked IGNORED
+    (so its amount is never double-counted against the new per-week
+    records) but keeps a review_reason linking to what it was split into --
+    the real M-PESA message and its timestamp are preserved on every piece,
+    only effective_date differs between them."""
+    transaction = store.transactions.get(transaction_id)
+    if transaction is None:
+        raise ValueError(f"Unknown transaction: {transaction_id}")
+    contributor = store.contributors.get(contributor_id)
+    if contributor is None:
+        raise ValueError(f"Unknown contributor: {contributor_id}")
+
+    _, plan = _plan_weekly_split(transaction.collection_id, contributor, transaction)
+
+    created: list[Transaction] = []
+    for i, (week, amount) in enumerate(plan, start=1):
+        child = Transaction(
+            collection_id=transaction.collection_id,
+            mpesa_code=f"{transaction.mpesa_code}-W{i}",
+            sender_name=transaction.sender_name,
+            sender_phone=transaction.sender_phone,
+            amount=amount,
+            timestamp=transaction.timestamp,
+            status=TransactionStatus.CONFIRMED,
+            matched_contributor_id=contributor.id,
+            paid_by_name=transaction.sender_name,
+            confidence=1.0,
+            effective_date=week,
+            review_reason=(
+                f"Part {i}/{len(plan)} of a KSh {transaction.amount} payment "
+                f"(M-PESA {transaction.mpesa_code}) covering the week of {week}."
+            ),
+        )
+        created.append(store.transactions.create(child))
+
+    _learn_alias(contributor, transaction.sender_name)
+    weeks_text = ", ".join(str(week) for week, _ in plan)
+    codes_text = ", ".join(c.mpesa_code for c in created)
+    transaction.matched_contributor_id = contributor.id
+    transaction.paid_by_name = transaction.sender_name
+    transaction.status = TransactionStatus.IGNORED
+    transaction.review_reason = (
+        f"Split into {len(plan)} weekly contributions to {contributor.name} "
+        f"covering the weeks of {weeks_text} -- see linked transactions "
+        f"{codes_text}."
+    )
+    transaction = store.transactions.update(transaction)
+
+    return transaction, created
 
 
 def create_transaction(

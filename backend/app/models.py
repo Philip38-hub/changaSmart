@@ -238,3 +238,20 @@ class WeeklyCollectionReport(BaseModel):
     name: str
     weeks: list[WeeklyBreakdownEntry]
     grand_total: int
+
+
+class WeeklySplitInstallment(BaseModel):
+    week_start: dt.date
+    week_end: dt.date
+    amount: int
+
+
+class WeeklySplitPreview(BaseModel):
+    contributor_id: str
+    weekly_amount: int
+    installments: list[WeeklySplitInstallment]
+
+
+class WeeklySplitResult(BaseModel):
+    original_transaction: Transaction
+    created_transactions: list[Transaction]

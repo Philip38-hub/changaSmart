@@ -43,17 +43,65 @@ Map<String, dynamic> _txnJson() => {
 
 Transaction _txn() => Transaction.fromJson(_txnJson());
 
-Future<void> _pump(WidgetTester tester, ApiService api) async {
+Map<String, dynamic> _catchUpTxnJson() => {
+      ..._txnJson(),
+      'amount': 200,
+      'matched_contributor_id': 'contrib_mose',
+    };
+
+Map<String, dynamic> _splitPreviewJson() => {
+      'contributor_id': 'contrib_mose',
+      'weekly_amount': 100,
+      'installments': [
+        {'week_start': '2026-08-24', 'week_end': '2026-08-30', 'amount': 100},
+        {'week_start': '2026-08-31', 'week_end': '2026-09-06', 'amount': 100},
+      ],
+    };
+
+Map<String, dynamic> _splitResultJson() => {
+      'original_transaction': {..._catchUpTxnJson(), 'status': 'IGNORED'},
+      'created_transactions': [
+        {
+          ..._catchUpTxnJson(),
+          'id': 'txn_2',
+          'mpesa_code': 'UI8J065WQX-W1',
+          'amount': 100,
+          'status': 'CONFIRMED',
+          'effective_date': '2026-08-24',
+        },
+        {
+          ..._catchUpTxnJson(),
+          'id': 'txn_3',
+          'mpesa_code': 'UI8J065WQX-W2',
+          'amount': 100,
+          'status': 'CONFIRMED',
+          'effective_date': '2026-08-31',
+        },
+      ],
+    };
+
+Future<void> _pump(
+  WidgetTester tester,
+  ApiService api, {
+  Transaction? transaction,
+  String? suggestedContributorName,
+  void Function(Transaction updated)? onResolved,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: ApiServiceProvider(
-          api: api,
-          child: ReviewActionCard(
-            collectionId: 'coll_1',
-            transaction: _txn(),
-            suggestedContributorName: null,
-            onResolved: (_) {},
+        // Matches production: reconciliation_result_screen.dart always
+        // renders this card inside a scrollable ListView, never directly
+        // in a fixed-height body.
+        body: SingleChildScrollView(
+          child: ApiServiceProvider(
+            api: api,
+            child: ReviewActionCard(
+              collectionId: 'coll_1',
+              transaction: transaction ?? _txn(),
+              suggestedContributorName: suggestedContributorName,
+              onResolved: onResolved ?? (_) {},
+            ),
           ),
         ),
       ),
@@ -159,5 +207,54 @@ void main() {
     final body = jsonDecode(resolveRequest!.body) as Map<String, dynamic>;
     expect(body['action'], 'CREDIT_SENDER_AS_CONTRIBUTOR');
     expect(body['effective_date'], '2026-09-08');
+  });
+
+  testWidgets('splitting a catch-up payment previews then commits the weekly breakdown', (tester) async {
+    Uri? previewUrl;
+    http.Request? splitRequest;
+    Transaction? resolvedTxn;
+    final api = ApiService(
+      baseUrl: 'http://test.local',
+      client: MockClient((request) async {
+        if (request.method == 'GET' && request.url.path.endsWith('/split-preview')) {
+          previewUrl = request.url;
+          return _json(_splitPreviewJson());
+        }
+        if (request.method == 'POST' && request.url.path.endsWith('/split-into-weeks')) {
+          splitRequest = request;
+          return _json(_splitResultJson());
+        }
+        return _json({}, statusCode: 404);
+      }),
+    );
+
+    await _pump(
+      tester,
+      api,
+      transaction: Transaction.fromJson(_catchUpTxnJson()),
+      suggestedContributorName: 'Mose',
+      onResolved: (updated) => resolvedTxn = updated,
+    );
+
+    await tester.tap(find.text('Split into weekly contributions'));
+    await tester.pumpAndSettle();
+
+    expect(previewUrl, isNotNull);
+    expect(previewUrl!.queryParameters['contributor_id'], 'contrib_mose');
+
+    // Preview dialog shows the computed per-week breakdown before anything
+    // is committed.
+    expect(find.text('Week of 24 Aug 2026'), findsOneWidget);
+    expect(find.text('Week of 31 Aug 2026'), findsOneWidget);
+    expect(splitRequest, isNull);
+
+    await tester.tap(find.text('Split'));
+    await tester.pumpAndSettle();
+
+    expect(splitRequest, isNotNull);
+    final body = jsonDecode(splitRequest!.body) as Map<String, dynamic>;
+    expect(body['contributor_id'], 'contrib_mose');
+    expect(resolvedTxn?.status, TransactionStatus.ignored);
+    expect(find.text('Split into 2 weekly contributions.'), findsOneWidget);
   });
 }

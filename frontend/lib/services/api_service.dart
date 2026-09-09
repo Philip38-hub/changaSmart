@@ -345,6 +345,33 @@ class ApiService {
     return Transaction.fromJson(result);
   }
 
+  /// Shows what splitting `transactionId` into weekly contributions to
+  /// `contributorId` would look like -- e.g. a KSh 200 catch-up payment
+  /// from someone who missed 2 weeks of a KSh 100 weekly amount. Read-only;
+  /// nothing is written until [splitIntoWeeks] is called.
+  Future<WeeklySplitPreview> getSplitPreview({
+    required String transactionId,
+    required String contributorId,
+  }) async {
+    final result = await _get(
+      '/transactions/$transactionId/split-preview?contributor_id=$contributorId',
+    );
+    return WeeklySplitPreview.fromJson(result as Map<String, dynamic>);
+  }
+
+  /// Commits a split previewed via [getSplitPreview]: the original
+  /// transaction becomes IGNORED and one new CONFIRMED transaction is
+  /// created per week it covers.
+  Future<WeeklySplitResult> splitIntoWeeks({
+    required String transactionId,
+    required String contributorId,
+  }) async {
+    final result = await _post('/transactions/$transactionId/split-into-weeks', {
+      'contributor_id': contributorId,
+    });
+    return WeeklySplitResult.fromJson(result as Map<String, dynamic>);
+  }
+
   String _dateOnly(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'

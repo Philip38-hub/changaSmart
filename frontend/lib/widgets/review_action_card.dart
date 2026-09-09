@@ -98,6 +98,63 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
     if (picked != null) setState(() => _overrideDate = picked);
   }
 
+  /// Handles a catch-up payment covering more than one week (e.g. KSh 200
+  /// from someone who missed 2 weeks of a KSh 100 weekly amount): preview
+  /// the week-by-week split the backend would make, let the human confirm
+  /// it, then commit. If the amount doesn't actually cover more than one
+  /// week (or there's no way to tell what one week is worth), the backend
+  /// says so and that's shown as a plain error -- there's nothing to split.
+  Future<void> _splitAcrossWeeks(BuildContext context, ApiService api) async {
+    final contributorId = widget.transaction.matchedContributorId;
+    if (contributorId == null) return;
+
+    setState(() => _busy = true);
+    WeeklySplitPreview preview;
+    try {
+      preview = await api.getSplitPreview(
+        transactionId: widget.transaction.id,
+        contributorId: contributorId,
+      );
+    } catch (e) {
+      if (mounted) setState(() => _busy = false);
+      if (context.mounted) showErrorSnackBar(context, e);
+      return;
+    }
+    if (mounted) setState(() => _busy = false);
+    if (!context.mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _SplitPreviewDialog(
+        preview: preview,
+        contributorName: widget.suggestedContributorName ?? widget.transaction.senderName,
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final result = await api.splitIntoWeeks(
+        transactionId: widget.transaction.id,
+        contributorId: contributorId,
+      );
+      widget.onResolved(result.originalTransaction);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Split into ${result.createdTransactions.length} weekly contributions.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) showErrorSnackBar(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final api = ApiServiceProvider.of(context);
@@ -193,6 +250,17 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
                       child: Text('Credit ${txn.senderName}'),
                     ),
                   ),
+                  if (hasSuggestion) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _splitAcrossWeeks(context, api),
+                        icon: const Icon(Icons.call_split, size: 18),
+                        label: const Text('Split into weekly contributions'),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
@@ -322,6 +390,67 @@ class _Field extends StatelessWidget {
         ),
         Expanded(
           child: Text(value, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
+}
+
+/// Shows the exact week-by-week breakdown a split would produce (computed
+/// server-side -- see ApiService.getSplitPreview) and lets the human
+/// confirm or back out before anything is written.
+class _SplitPreviewDialog extends StatelessWidget {
+  final WeeklySplitPreview preview;
+  final String contributorName;
+
+  const _SplitPreviewDialog({required this.preview, required this.contributorName});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = preview.installments.fold<int>(0, (sum, i) => sum + i.amount);
+    return AlertDialog(
+      title: const Text('Split into weekly contributions'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Based on $contributorName\'s usual weekly amount of '
+              '${formatKsh(preview.weeklyAmount)}, this payment covers:',
+            ),
+            const SizedBox(height: 12),
+            ...preview.installments.map(
+              (i) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Week of ${formatDate(i.weekStart)}'),
+                    Text(formatKsh(i.amount), style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Total', style: TextStyle(fontWeight: FontWeight.w700)),
+                Text(formatKsh(total), style: const TextStyle(fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Split'),
         ),
       ],
     );
