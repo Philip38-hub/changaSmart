@@ -88,6 +88,21 @@ class ReviewResolutionRequest(BaseModel):
     new_contributor_name: str | None = None
 
 
+class ContributorBulkImportRow(BaseModel):
+    name: str = Field(min_length=1)
+    expected_amount: int | None = Field(default=None, ge=0)
+    phone: str | None = None
+
+
+class ContributorBulkImportRequest(BaseModel):
+    contributors: list[ContributorBulkImportRow] = Field(min_length=1)
+
+
+class ContributorBulkImportResponse(BaseModel):
+    created: list[Contributor]
+    skipped_names: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -175,6 +190,24 @@ def list_contributors(collection_id: str) -> list[Contributor]:
     if store.collections.get(collection_id) is None:
         raise HTTPException(status_code=404, detail="Collection not found")
     return store.contributors.list_by_collection(collection_id)
+
+
+@app.post(
+    "/collections/{collection_id}/contributors/bulk",
+    response_model=ContributorBulkImportResponse,
+)
+def bulk_import_contributors(
+    collection_id: str, payload: ContributorBulkImportRequest
+) -> ContributorBulkImportResponse:
+    """Create many contributors at once from an already-parsed list (e.g. a
+    pasted WhatsApp-style list or CSV, parsed client-side). Rows whose
+    normalized name already exists in this collection are skipped and
+    reported back rather than duplicated."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    rows = [(r.name, r.expected_amount, r.phone) for r in payload.contributors]
+    created, skipped = setup_service.bulk_create_contributors(collection_id, rows)
+    return ContributorBulkImportResponse(created=created, skipped_names=skipped)
 
 
 @app.post("/collections/{collection_id}/transactions", response_model=Transaction)

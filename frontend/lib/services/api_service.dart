@@ -181,6 +181,26 @@ class ApiService {
     return Contributor.fromJson(result);
   }
 
+  /// Creates many contributors at once from an already-parsed list (see
+  /// ContributorListParser) -- one HTTP call, not a loop. Rows whose name
+  /// already exists in the collection are skipped and reported back rather
+  /// than duplicated.
+  Future<ContributorBulkImportResult> bulkImportContributors({
+    required String collectionId,
+    required List<({String name, int? expectedAmount, String? phone})> rows,
+  }) async {
+    final result = await _post('/collections/$collectionId/contributors/bulk', {
+      'contributors': rows
+          .map((r) => {
+                'name': r.name,
+                if (r.expectedAmount != null) 'expected_amount': r.expectedAmount,
+                if (r.phone != null) 'phone': r.phone,
+              })
+          .toList(),
+    });
+    return ContributorBulkImportResult.fromJson(result as Map<String, dynamic>);
+  }
+
   // ---------------------------------------------------------------------
   // Transactions
   // ---------------------------------------------------------------------

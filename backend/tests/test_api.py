@@ -319,3 +319,116 @@ def test_close_collection():
 def test_close_nonexistent_collection_returns_404():
     response = client.post("/collections/coll_does_not_exist/close")
     assert response.status_code == 404
+
+
+def test_bulk_import_contributors_happy_path():
+    project = client.post("/projects", json={"name": "Weekly Chama"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+
+    response = client.post(
+        f"/collections/{collection['id']}/contributors/bulk",
+        json={
+            "contributors": [
+                {"name": "Apilo"},
+                {"name": "Omosh"},
+                {"name": "Sarcastic"},
+            ]
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert [c["name"] for c in body["created"]] == ["Apilo", "Omosh", "Sarcastic"]
+    assert body["skipped_names"] == []
+
+
+def test_bulk_import_skips_exact_duplicate_names():
+    project = client.post("/projects", json={"name": "Weekly Chama 2"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    client.post(
+        f"/collections/{collection['id']}/contributors", json={"name": "Apilo"}
+    )
+
+    response = client.post(
+        f"/collections/{collection['id']}/contributors/bulk",
+        json={"contributors": [{"name": "apilo"}, {"name": "Esco"}]},
+    )
+    body = response.json()
+
+    assert [c["name"] for c in body["created"]] == ["Esco"]
+    assert body["skipped_names"] == ["apilo"]
+
+
+def test_bulk_import_unknown_collection_returns_404():
+    response = client.post(
+        "/collections/coll_does_not_exist/contributors/bulk",
+        json={"contributors": [{"name": "Apilo"}]},
+    )
+    assert response.status_code == 404
+
+
+def test_bulk_import_rejects_empty_list():
+    project = client.post("/projects", json={"name": "Empty Import Fund"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+
+    response = client.post(
+        f"/collections/{collection['id']}/contributors/bulk",
+        json={"contributors": []},
+    )
+    assert response.status_code == 422
+
+
+def test_alias_learned_via_resolve_review_auto_matches_next_payment_over_http():
+    project = client.post("/projects", json={"name": "Alias Fund"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    sarcastic = client.post(
+        f"/collections/{collection['id']}/contributors",
+        json={"name": "Sarcastic"},
+    ).json()
+
+    first_txn = client.post(
+        f"/collections/{collection['id']}/transactions",
+        json={
+            "mpesa_code": "ALIAS001",
+            "sender_name": "John K Otieno",
+            "amount": 100,
+            "timestamp": "2026-09-04T10:00:00Z",
+        },
+    ).json()
+    first_decisions = client.post(f"/collections/{collection['id']}/reconcile").json()
+    assert first_decisions[0]["decision"] == "NEEDS_HUMAN_REVIEW"
+
+    client.post(
+        f"/transactions/{first_txn['id']}/resolve-review",
+        json={
+            "action": "CREDIT_SUGGESTED_CONTRIBUTOR",
+            "contributor_id": sarcastic["id"],
+        },
+    )
+
+    client.post(
+        f"/collections/{collection['id']}/transactions",
+        json={
+            "mpesa_code": "ALIAS002",
+            "sender_name": "John K Otieno",
+            "amount": 100,
+            "timestamp": "2026-09-11T10:00:00Z",
+        },
+    )
+    second_decisions = client.post(f"/collections/{collection['id']}/reconcile").json()
+
+    assert second_decisions[0]["decision"] == "AUTO_MATCHED"
+    assert second_decisions[0]["suggested_contributor_id"] == sarcastic["id"]
+    assert "remembered alias" in second_decisions[0]["reason"]

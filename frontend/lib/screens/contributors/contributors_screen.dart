@@ -6,6 +6,7 @@ import '../../services/api_service.dart';
 import '../../utils/format.dart';
 import '../../widgets/async_data_view.dart';
 import '../../widgets/status_badge.dart';
+import 'import_contributors_screen.dart';
 
 class ContributorsScreen extends StatefulWidget {
   final ApiService api;
@@ -31,10 +32,28 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
     if (added == true) _dataKey.currentState?.reload();
   }
 
+  Future<void> _importContributors() async {
+    final imported = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ImportContributorsScreen(api: widget.api, collectionId: widget.collectionId),
+      ),
+    );
+    if (imported == true) _dataKey.currentState?.reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Expected Contributors')),
+      appBar: AppBar(
+        title: const Text('Expected Contributors'),
+        actions: [
+          IconButton(
+            onPressed: _importContributors,
+            icon: const Icon(Icons.upload_file_outlined),
+            tooltip: 'Import list',
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addContributor,
         icon: const Icon(Icons.add),
@@ -51,10 +70,21 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
                 icon: Icons.people_outline,
                 title: 'No contributors yet',
                 subtitle: 'Add who you expect to contribute to this collection.',
-                action: FilledButton.icon(
-                  onPressed: _addContributor,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Contributor'),
+                action: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _addContributor,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Contributor'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: _importContributors,
+                      icon: const Icon(Icons.upload_file_outlined),
+                      label: const Text('Import a list instead'),
+                    ),
+                  ],
                 ),
               );
             }
