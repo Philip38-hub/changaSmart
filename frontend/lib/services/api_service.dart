@@ -211,9 +211,21 @@ class ApiService {
     required int amount,
     required DateTime timestamp,
   }) async {
+    // Deliberately NOT `timestamp.toUtc()`: this is meant to represent a
+    // calendar date (which week this counts toward), not a real moment in
+    // time. `timestamp` is often built as a bare local midnight (e.g. from
+    // ContributorListParser's week-header dates); converting that to UTC
+    // in any positive-offset timezone (e.g. Kenya, UTC+3) subtracts hours
+    // and lands on the *previous* day -- which, for a Monday date, silently
+    // shifts the whole entry into the prior week's bucket. Sending the
+    // date components directly at a fixed UTC time-of-day sidesteps any
+    // such conversion entirely. Caught via real phone testing.
+    final datePart = '${timestamp.year.toString().padLeft(4, '0')}-'
+        '${timestamp.month.toString().padLeft(2, '0')}-'
+        '${timestamp.day.toString().padLeft(2, '0')}';
     final result = await _post(
       '/collections/$collectionId/contributors/$contributorId/manual-contributions',
-      {'amount': amount, 'timestamp': timestamp.toUtc().toIso8601String()},
+      {'amount': amount, 'timestamp': '${datePart}T12:00:00Z'},
     );
     return Transaction.fromJson(result);
   }
