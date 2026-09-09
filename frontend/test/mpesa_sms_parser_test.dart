@@ -171,6 +171,37 @@ void main() {
     });
   });
 
+  group('real-world messages found via phone testing', () {
+    test('lowercase sender name with a partially masked phone number is still parsed', () {
+      final r = _classify(
+        'UI8J065WQX Confirmed.You have received Ksh100.00 from perister  '
+        'mokua 0745***915 on 8/9/26 at 9:00 AM  New M-PESA balance is '
+        'Ksh100.00. Invest & earn daily interest with ZIIDI on https://saf.cx/cF6ir',
+      );
+      expect(r.kind, MpesaSmsKind.incomingPayment);
+      expect(r.amount, 100);
+      expect(r.senderName, 'perister  mokua');
+      expect(r.transactionCode, 'UI8J065WQX');
+      expect(r.isImportable, isTrue);
+    });
+
+    test('a plain (non-comma-separated) 4-digit amount is not truncated', () {
+      final r = _classify(
+        'QAX1LLL222 Confirmed. You have received Ksh3550 from JOHN KAMAU '
+        'on 4/9/26 at 9:00 AM.',
+      );
+      expect(r.amount, 3550);
+    });
+
+    test('a plain 5-digit amount with KES prefix is not truncated', () {
+      final r = _classify(
+        'QAX1MMM333 Confirmed. You have received KES 12000 from JOHN KAMAU '
+        'on 4/9/26 at 9:00 AM.',
+      );
+      expect(r.amount, 12000);
+    });
+  });
+
   group('sender vs. eventual credited contributor', () {
     test('parser only ever reports the literal SMS sender, never a contributor name', () {
       // The parser has no concept of "expected contributors" at all --

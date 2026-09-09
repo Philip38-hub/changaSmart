@@ -11,16 +11,31 @@ import '../models/mpesa_sms.dart';
 class MpesaSmsParser {
   // Amount: "Ksh", "Ksh.", "KSh", "KES" (any case), optional space/dot,
   // digits with optional thousands separators and optional cents.
+  //
+  // The comma-grouped branch requires AT LEAST ONE comma group (`+`, not
+  // `*`): with `*`, a plain 4+-digit amount with no thousands separator
+  // (e.g. "KES 3550") would match the comma branch's `[0-9]{1,3}` piece
+  // alone -- greedily consuming only "355" and silently dropping the
+  // trailing "0" -- since that branch is tried first and succeeds without
+  // needing to consume the rest. Requiring `+` forces an un-grouped number
+  // to fall through to the plain `[0-9]+` branch, which consumes it in
+  // full. Caught via a real M-PESA-adjacent SMS during phone testing.
   static final RegExp _amountWithValuePattern = RegExp(
-    r'(?:ksh\.?|kes)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)',
+    r'(?:ksh\.?|kes)\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)',
     caseSensitive: false,
   );
 
-  // "from JOHN KAMAU", "from MARY WAMBUI KAMAU 254712345678" -- stops
-  // naturally at the first token that doesn't start with an uppercase
-  // letter (a phone number, "on", punctuation, ...).
+  // "from JOHN KAMAU", "from perister  mokua 0745***915 on ..." -- some
+  // real M-PESA messages render the sender name in lowercase, so this
+  // can't require an initial capital letter (caught via phone testing).
+  // It still stops naturally at the first token that isn't a letter/
+  // apostrophe/hyphen -- a phone number (real or partially masked with
+  // "*"), "on", punctuation, etc. -- without needing to name those
+  // terminators explicitly. The captured name is returned verbatim,
+  // whatever case the SMS used -- see the "reports the literal SMS
+  // sender" invariant test.
   static final RegExp _senderPattern = RegExp(
-    r"from\s+([A-Z][A-Za-z'\-]*(?:\s+[A-Z][A-Za-z'\-]*){0,4})",
+    r"from\s+([A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*){0,4})",
   );
 
   // A Kenyan phone number as it appears in M-PESA SMS: 9-12 digits,
