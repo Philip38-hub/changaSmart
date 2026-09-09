@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from app.models import Collection, CollectionType, Contributor, Project
+from app.models import Collection, CollectionType, Contributor, PeriodType, Project
 from app.repositories.store import store
 from app.services.reconciliation import normalize_name
 
@@ -23,6 +23,8 @@ def create_collection(
     name: str,
     target_amount: int | None = None,
     date: dt.date | None = None,
+    period: PeriodType = PeriodType.WEEKLY,
+    period_anchor: dt.date | None = None,
 ) -> Collection:
     return store.collections.create(
         Collection(
@@ -31,6 +33,12 @@ def create_collection(
             name=name,
             target_amount=target_amount,
             date=date,
+            period=period,
+            # A fresh anchor per call rather than relying on the model's
+            # own default factory, so an explicitly-passed anchor (e.g.
+            # "this fortnightly chama actually started 2026-08-01") wins
+            # over "today" without a separate conditional field.
+            **({"period_anchor": period_anchor} if period_anchor is not None else {}),
         )
     )
 

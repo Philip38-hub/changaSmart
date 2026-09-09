@@ -434,7 +434,7 @@ def test_alias_learned_via_resolve_review_auto_matches_next_payment_over_http():
     assert "remembered alias" in second_decisions[0]["reason"]
 
 
-def test_manual_contribution_and_weekly_report_over_http():
+def test_manual_contribution_and_period_report_over_http():
     project = client.post("/projects", json={"name": "Weekly Chama HTTP"}).json()
     collection = client.post(
         f"/projects/{project['id']}/collections",
@@ -451,11 +451,11 @@ def test_manual_contribution_and_weekly_report_over_http():
     assert manual.status_code == 200
     assert manual.json()["status"] == "CONFIRMED"
 
-    weekly = client.get(f"/collections/{collection['id']}/report/weekly").json()
-    assert weekly["grand_total"] == 100
-    assert len(weekly["weeks"]) == 1
+    periods = client.get(f"/collections/{collection['id']}/report/periods").json()
+    assert periods["grand_total"] == 100
+    assert len(periods["periods"]) == 1
 
-    whatsapp = client.get(f"/collections/{collection['id']}/whatsapp/weekly").json()
+    whatsapp = client.get(f"/collections/{collection['id']}/whatsapp/periods").json()
     assert "Apilo" in whatsapp["text"]
     assert "Weekly total: KSh 100" in whatsapp["text"]
 
@@ -498,7 +498,7 @@ def test_missing_weeks_and_effective_date_reassignment_over_http():
     ).json()
 
     missing = client.get(
-        f"/collections/{collection['id']}/contributors/{mose['id']}/missing-weeks"
+        f"/collections/{collection['id']}/contributors/{mose['id']}/missing-periods"
     )
     assert missing.status_code == 200
     assert missing.json() == ["2026-08-24"]
@@ -518,25 +518,25 @@ def test_missing_weeks_and_effective_date_reassignment_over_http():
     assert reassigned.json()["effective_date"] == "2026-08-24"
     assert reassigned.json()["timestamp"] == "2026-09-07T10:00:00Z"  # untouched
 
-    weekly = client.get(f"/collections/{collection['id']}/report/weekly").json()
-    assert len(weekly["weeks"]) == 2
-    assert [w["weekly_total"] for w in weekly["weeks"]] == [200, 200]
+    periods = client.get(f"/collections/{collection['id']}/report/periods").json()
+    assert len(periods["periods"]) == 2
+    assert [p["period_total"] for p in periods["periods"]] == [200, 200]
 
     # No gaps left for Mose now.
     missing_after = client.get(
-        f"/collections/{collection['id']}/contributors/{mose['id']}/missing-weeks"
+        f"/collections/{collection['id']}/contributors/{mose['id']}/missing-periods"
     ).json()
     assert missing_after == []
 
 
-def test_missing_weeks_unknown_contributor_returns_404():
+def test_missing_periods_unknown_contributor_returns_404():
     project = client.post("/projects", json={"name": "Gap Week Fund 2"}).json()
     collection = client.post(
         f"/projects/{project['id']}/collections",
         json={"type": "MAIN", "name": "Main Contribution"},
     ).json()
     response = client.get(
-        f"/collections/{collection['id']}/contributors/contrib_missing/missing-weeks"
+        f"/collections/{collection['id']}/contributors/contrib_missing/missing-periods"
     )
     assert response.status_code == 404
 
@@ -579,12 +579,12 @@ def test_split_catch_up_payment_over_http():
     )
     assert preview.status_code == 200
     body = preview.json()
-    assert body["weekly_amount"] == 100
+    assert body["period_amount"] == 100
     assert [i["amount"] for i in body["installments"]] == [100, 100]
-    assert [i["week_start"] for i in body["installments"]] == ["2026-08-24", "2026-08-31"]
+    assert [i["period_start"] for i in body["installments"]] == ["2026-08-24", "2026-08-31"]
 
     result = client.post(
-        f"/transactions/{catch_up['id']}/split-into-weeks",
+        f"/transactions/{catch_up['id']}/split-into-periods",
         json={"contributor_id": mose["id"]},
     )
     assert result.status_code == 200
@@ -594,9 +594,9 @@ def test_split_catch_up_payment_over_http():
     assert [t["amount"] for t in body["created_transactions"]] == [100, 100]
     assert all(t["status"] == "CONFIRMED" for t in body["created_transactions"])
 
-    weekly = client.get(f"/collections/{collection['id']}/report/weekly").json()
-    assert [w["weekly_total"] for w in weekly["weeks"]] == [100, 100, 100]
-    assert weekly["grand_total"] == 300
+    periods = client.get(f"/collections/{collection['id']}/report/periods").json()
+    assert [p["period_total"] for p in periods["periods"]] == [100, 100, 100]
+    assert periods["grand_total"] == 300
 
     contributors = client.get(f"/collections/{collection['id']}/contributors").json()
     mose_now = next(c for c in contributors if c["id"] == mose["id"])
@@ -620,7 +620,7 @@ def test_split_preview_unknown_transaction_returns_404():
     assert response.status_code == 404
 
 
-def test_split_into_weeks_unknown_contributor_returns_404():
+def test_split_into_periods_unknown_contributor_returns_404():
     project = client.post("/projects", json={"name": "Split Fund 3"}).json()
     collection = client.post(
         f"/projects/{project['id']}/collections",
@@ -637,13 +637,13 @@ def test_split_into_weeks_unknown_contributor_returns_404():
     ).json()
 
     response = client.post(
-        f"/transactions/{txn['id']}/split-into-weeks",
+        f"/transactions/{txn['id']}/split-into-periods",
         json={"contributor_id": "contrib_missing"},
     )
     assert response.status_code == 404
 
 
-def test_split_single_week_amount_returns_400_over_http():
+def test_split_single_period_amount_returns_400_over_http():
     project = client.post("/projects", json={"name": "Split Fund 4"}).json()
     collection = client.post(
         f"/projects/{project['id']}/collections",

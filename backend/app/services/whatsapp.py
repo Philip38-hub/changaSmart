@@ -7,9 +7,9 @@ into a WhatsApp group.
 
 from __future__ import annotations
 
-from app.models import TransactionStatus
+from app.models import PeriodType, TransactionStatus
 from app.repositories.store import store
-from app.services.reporting import generate_collection_report, generate_weekly_report
+from app.services.reporting import generate_collection_report, generate_period_report
 
 
 def _money_line(name: str, amount: int) -> str:
@@ -128,20 +128,32 @@ def _format_date(d) -> str:
     return d.strftime("%d/%m")
 
 
-def weekly_contribution_update(collection_id: str) -> str:
-    """Copy-paste-ready weekly breakdown, formatted to match a typical
-    manually-kept WhatsApp weekly tracker: numbered names per week, a
-    weekly total, and a running grand total."""
-    report = generate_weekly_report(collection_id)
-    if not report.weeks:
-        return f"📢 {report.name} — Weekly Update\n\nNo contributions recorded yet."
+_PERIOD_LABEL = {
+    PeriodType.WEEKLY: "Week",
+    PeriodType.FORTNIGHTLY: "Fortnight",
+    PeriodType.MONTHLY: "Month",
+}
 
-    lines = [f"📢 {report.name} — Weekly Update", ""]
-    for week in report.weeks:
-        lines.append(f"Week of {_format_date(week.week_start)} - {_format_date(week.week_end)}")
-        for i, entry in enumerate(week.contributions, start=1):
+
+def period_contribution_update(collection_id: str) -> str:
+    """Copy-paste-ready period-by-period breakdown, formatted to match a
+    typical manually-kept WhatsApp tracker: numbered names per period, a
+    period total, and a running grand total. "Period" follows the
+    collection's own configured cadence (Collection.period) -- a weekly
+    chama gets "Week of ...", a monthly one gets "Month of ..."."""
+    report = generate_period_report(collection_id)
+    label = _PERIOD_LABEL[report.period]
+    if not report.periods:
+        return f"📢 {report.name} — {label}ly Update\n\nNo contributions recorded yet."
+
+    lines = [f"📢 {report.name} — {label}ly Update", ""]
+    for period in report.periods:
+        lines.append(
+            f"{label} of {_format_date(period.period_start)} - {_format_date(period.period_end)}"
+        )
+        for i, entry in enumerate(period.contributions, start=1):
             lines.append(f"{i}. {entry.name} — KSh {entry.amount:,}")
-        lines.append(f"Weekly total: KSh {week.weekly_total:,}")
+        lines.append(f"{label}ly total: KSh {period.period_total:,}")
         lines.append("")
 
     lines.append(f"Total: KSh {report.grand_total:,}")

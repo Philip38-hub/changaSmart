@@ -20,6 +20,7 @@ from app.models import (
     ContributorCandidate,
     HumanReviewAction,
     HumanReviewResolution,
+    PeriodType,
     ReconciliationDecision,
     ReconciliationDecisionType,
     Transaction,
@@ -27,7 +28,12 @@ from app.models import (
     TransactionStatus,
 )
 from app.repositories.store import store
-from app.services.reporting import find_missing_weeks, generate_weekly_report
+from app.services.reporting import (
+    _next_period_start,
+    _period_start,
+    find_missing_periods,
+    generate_period_report,
+)
 
 # A near-exact name match, combined with a consistent (or absent) expected
 # amount, is trusted enough to auto-confirm without involving the LLM.
@@ -180,17 +186,18 @@ def record_manual_contribution(
     return store.transactions.create(transaction)
 
 
-def _infer_weekly_amount(
+def _infer_period_amount(
     collection_id: str, contributor: Contributor, transaction: Transaction
 ) -> int | None:
-    """What one week's contribution is worth for this contributor, for
+    """What one period's (week's, fortnight's, or month's -- see
+    Collection.period) contribution is worth for this contributor, for
     splitting purposes. A contributor rarely has an explicit
     expected_amount in practice (bulk-imported lists deliberately don't
     set one -- see setup.bulk_create_contributors), so this falls back to
     real recorded behaviour: this contributor's own most recent confirmed
     payment, or -- if they have none on record -- the most common
     confirmed single payment across the collection (e.g. everyone else's
-    established weekly amount)."""
+    established period amount)."""
     if contributor.expected_amount:
         return contributor.expected_amount
 
@@ -210,59 +217,77 @@ def _infer_weekly_amount(
     return None
 
 
-def _plan_weekly_split(
+def _plan_period_split(
     collection_id: str, contributor: Contributor, transaction: Transaction
 ) -> tuple[int, list[tuple[dt.date, int]]]:
-    """Decide what one week is worth for this contributor and which weeks
-    a multi-week catch-up payment should cover. Full weekly amounts fill
-    the contributor's earliest missing weeks first (see find_missing_weeks);
-    a leftover partial amount, if any, lands on the last (most recent) week
-    assigned. If there are more installments than known missing weeks,
-    the remainder continue chronologically after the collection's latest
-    known week, so they never collide with a week someone already has a
-    confirmed payment for."""
-    weekly = _infer_weekly_amount(collection_id, contributor, transaction)
-    if weekly is None or weekly <= 0:
+    """Decide what one period is worth for this contributor and which
+    periods a multi-period catch-up payment should cover. Full period
+    amounts fill the contributor's earliest missing periods first (see
+    find_missing_periods); a leftover partial amount, if any, lands on the
+    last (most recent) period assigned. If there are more installments
+    than known missing periods, the remainder continue chronologically
+    after the collection's latest known period, so they never collide with
+    a period someone already has a confirmed payment for."""
+    collection = store.collections.get(collection_id)
+    if collection is None:
+        raise ValueError(f"Unknown collection: {collection_id}")
+
+    period_amount = _infer_period_amount(collection_id, contributor, transaction)
+    if period_amount is None or period_amount <= 0:
         raise ValueError(
-            f"Can't tell what one week is worth for {contributor.name} -- "
+            f"Can't tell what one period is worth for {contributor.name} -- "
             "they have no expected amount set and no payment history to "
             "infer it from."
         )
 
-    full_weeks, remainder = divmod(transaction.amount, weekly)
-    amounts = [weekly] * full_weeks
+    full_periods, remainder = divmod(transaction.amount, period_amount)
+    amounts = [period_amount] * full_periods
     if remainder:
         amounts.append(remainder)
     if len(amounts) < 2:
         raise ValueError(
-            f"KSh {transaction.amount} does not cover more than one week of "
-            f"{contributor.name}'s KSh {weekly} weekly amount -- nothing to split."
+            f"KSh {transaction.amount} does not cover more than one period of "
+            f"{contributor.name}'s KSh {period_amount} period amount -- nothing to split."
         )
 
-    missing = find_missing_weeks(collection_id, contributor.id)
-    known_weeks = [w.week_start for w in generate_weekly_report(collection_id).weeks]
+    missing = find_missing_periods(collection_id, contributor.id)
+    known_periods = [p.period_start for p in generate_period_report(collection_id).periods]
 
-    weeks = list(missing[: len(amounts)])
+    periods = list(missing[: len(amounts)])
     cursor = (
-        max(known_weeks)
-        if known_weeks
-        else (transaction.effective_date or transaction.timestamp.date())
-        - dt.timedelta(days=(transaction.effective_date or transaction.timestamp.date()).weekday())
-        - dt.timedelta(weeks=1)
+        max(known_periods)
+        if known_periods
+        else _period_start(
+            transaction.effective_date or transaction.timestamp.date(),
+            collection.period,
+            collection.period_anchor,
+        )
     )
-    while len(weeks) < len(amounts):
-        cursor = cursor + dt.timedelta(weeks=1)
-        if cursor not in weeks:
-            weeks.append(cursor)
+    if not known_periods:
+        # No history at all yet: the first installment lands on the
+        # transaction's own period, so start the walk one period earlier.
+        cursor = _step_back(cursor, collection.period, collection.period_anchor)
+    while len(periods) < len(amounts):
+        cursor = _next_period_start(cursor, collection.period)
+        if cursor not in periods:
+            periods.append(cursor)
 
-    return weekly, list(zip(weeks, amounts))
+    return period_amount, list(zip(periods, amounts))
 
 
-def preview_weekly_split(
+def _step_back(start: dt.date, period: PeriodType, anchor: dt.date) -> dt.date:
+    """The start of the period immediately before `start` -- only needed
+    to seed _plan_period_split's walk-forward cursor when a collection has
+    no recorded history at all yet."""
+    day_before = start - dt.timedelta(days=1)
+    return _period_start(day_before, period, anchor)
+
+
+def preview_split(
     transaction_id: str, contributor_id: str
 ) -> tuple[int, list[tuple[dt.date, int]]]:
-    """Read-only: what split_transaction_across_weeks would do, without
-    writing anything -- lets the UI show the exact week/amount breakdown
+    """Read-only: what split_transaction_across_periods would do, without
+    writing anything -- lets the UI show the exact period/amount breakdown
     before a human commits to it."""
     transaction = store.transactions.get(transaction_id)
     if transaction is None:
@@ -270,16 +295,16 @@ def preview_weekly_split(
     contributor = store.contributors.get(contributor_id)
     if contributor is None:
         raise ValueError(f"Unknown contributor: {contributor_id}")
-    return _plan_weekly_split(transaction.collection_id, contributor, transaction)
+    return _plan_period_split(transaction.collection_id, contributor, transaction)
 
 
-def split_transaction_across_weeks(
+def split_transaction_across_periods(
     transaction_id: str, contributor_id: str
 ) -> tuple[Transaction, list[Transaction]]:
     """Split a single catch-up payment (e.g. KSh 200 covering 2 missed
     weeks of a KSh 100 weekly amount) into one CONFIRMED transaction per
-    week it actually covers. The original transaction is marked IGNORED
-    (so its amount is never double-counted against the new per-week
+    period it actually covers. The original transaction is marked IGNORED
+    (so its amount is never double-counted against the new per-period
     records) but keeps a review_reason linking to what it was split into --
     the real M-PESA message and its timestamp are preserved on every piece,
     only effective_date differs between them."""
@@ -290,13 +315,13 @@ def split_transaction_across_weeks(
     if contributor is None:
         raise ValueError(f"Unknown contributor: {contributor_id}")
 
-    _, plan = _plan_weekly_split(transaction.collection_id, contributor, transaction)
+    _, plan = _plan_period_split(transaction.collection_id, contributor, transaction)
 
     created: list[Transaction] = []
-    for i, (week, amount) in enumerate(plan, start=1):
+    for i, (period, amount) in enumerate(plan, start=1):
         child = Transaction(
             collection_id=transaction.collection_id,
-            mpesa_code=f"{transaction.mpesa_code}-W{i}",
+            mpesa_code=f"{transaction.mpesa_code}-P{i}",
             sender_name=transaction.sender_name,
             sender_phone=transaction.sender_phone,
             amount=amount,
@@ -305,24 +330,23 @@ def split_transaction_across_weeks(
             matched_contributor_id=contributor.id,
             paid_by_name=transaction.sender_name,
             confidence=1.0,
-            effective_date=week,
+            effective_date=period,
             review_reason=(
                 f"Part {i}/{len(plan)} of a KSh {transaction.amount} payment "
-                f"(M-PESA {transaction.mpesa_code}) covering the week of {week}."
+                f"(M-PESA {transaction.mpesa_code}) covering the period of {period}."
             ),
         )
         created.append(store.transactions.create(child))
 
     _learn_alias(contributor, transaction.sender_name)
-    weeks_text = ", ".join(str(week) for week, _ in plan)
+    periods_text = ", ".join(str(period) for period, _ in plan)
     codes_text = ", ".join(c.mpesa_code for c in created)
     transaction.matched_contributor_id = contributor.id
     transaction.paid_by_name = transaction.sender_name
     transaction.status = TransactionStatus.IGNORED
     transaction.review_reason = (
-        f"Split into {len(plan)} weekly contributions to {contributor.name} "
-        f"covering the weeks of {weeks_text} -- see linked transactions "
-        f"{codes_text}."
+        f"Split into {len(plan)} period contributions to {contributor.name} "
+        f"covering {periods_text} -- see linked transactions {codes_text}."
     )
     transaction = store.transactions.update(transaction)
 

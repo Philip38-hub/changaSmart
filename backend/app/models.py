@@ -40,6 +40,18 @@ class CollectionType(StrEnum):
     HARAMBEE = "HARAMBEE"
 
 
+class PeriodType(StrEnum):
+    """How often a recurring collection expects a contribution -- drives
+    missing-period detection, catch-up payment splitting, and the
+    bulk-import pattern detector (see app/services/reporting.py). A
+    one-off Harambee session doesn't use this; it's only meaningful for a
+    MAIN collection's ongoing, repeating cadence."""
+
+    WEEKLY = "WEEKLY"
+    FORTNIGHTLY = "FORTNIGHTLY"
+    MONTHLY = "MONTHLY"
+
+
 class CollectionStatus(StrEnum):
     ACTIVE = "ACTIVE"
     CLOSED = "CLOSED"
@@ -97,6 +109,17 @@ class Collection(BaseModel):
     status: CollectionStatus = CollectionStatus.ACTIVE
     date: dt.date | None = None
     created_at: dt.datetime = Field(default_factory=_utcnow)
+
+    # How often this collection expects a recurring contribution. Only
+    # meaningful for MAIN collections; a Harambee's `date` above is its
+    # one-off event date, not a recurring cadence. `period_anchor` is the
+    # fixed reference point period boundaries are measured from -- it
+    # matters for FORTNIGHTLY (an arbitrary 14-day cadence has no
+    # calendar-fixed start, unlike a Monday-start week or a 1st-of-month
+    # month) and is set once, at creation, so it never drifts as data
+    # comes in later. See app/services/reporting.py's _period_start.
+    period: PeriodType = PeriodType.WEEKLY
+    period_anchor: dt.date = Field(default_factory=lambda: _utcnow().date())
 
 
 class Contributor(BaseModel):
@@ -203,11 +226,12 @@ class ContributorBreakdownEntry(BaseModel):
     contributor_id: str
     name: str
     expected_amount: int | None
-    # expected_amount scaled by how many weeks the collection has actually
+    # expected_amount scaled by how many periods (weeks, fortnights, or
+    # months -- see Collection.period) the collection has actually
     # recorded so far (see reporting.generate_collection_report) -- e.g. a
     # KSh 100 weekly amount across 4 recorded weeks is a KSh 400 target,
-    # not KSh 100. Null until at least one week has been recorded, or when
-    # expected_amount itself isn't set.
+    # not KSh 100. Null until at least one period has been recorded, or
+    # when expected_amount itself isn't set.
     current_target_amount: int | None
     total_paid: int
     status: ContributorStatus
@@ -226,38 +250,39 @@ class CollectionReport(BaseModel):
     contributor_breakdown: list[ContributorBreakdownEntry]
 
 
-class WeeklyContributionEntry(BaseModel):
+class PeriodContributionEntry(BaseModel):
     contributor_id: str
     name: str
     amount: int
 
 
-class WeeklyBreakdownEntry(BaseModel):
-    week_start: dt.date
-    week_end: dt.date
-    contributions: list[WeeklyContributionEntry]
-    weekly_total: int
+class PeriodBreakdownEntry(BaseModel):
+    period_start: dt.date
+    period_end: dt.date
+    contributions: list[PeriodContributionEntry]
+    period_total: int
 
 
-class WeeklyCollectionReport(BaseModel):
+class PeriodCollectionReport(BaseModel):
     collection_id: str
     name: str
-    weeks: list[WeeklyBreakdownEntry]
+    period: PeriodType
+    periods: list[PeriodBreakdownEntry]
     grand_total: int
 
 
-class WeeklySplitInstallment(BaseModel):
-    week_start: dt.date
-    week_end: dt.date
+class SplitInstallment(BaseModel):
+    period_start: dt.date
+    period_end: dt.date
     amount: int
 
 
-class WeeklySplitPreview(BaseModel):
+class SplitPreview(BaseModel):
     contributor_id: str
-    weekly_amount: int
-    installments: list[WeeklySplitInstallment]
+    period_amount: int
+    installments: list[SplitInstallment]
 
 
-class WeeklySplitResult(BaseModel):
+class SplitResult(BaseModel):
     original_transaction: Transaction
     created_transactions: list[Transaction]
