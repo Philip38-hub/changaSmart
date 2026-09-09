@@ -5,7 +5,7 @@ from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.services import whatsapp as whatsapp_service
 from app.repositories.store import store
-from app.services.reporting import generate_weekly_report
+from app.services.reporting import find_missing_weeks, generate_weekly_report
 
 
 def _make_collection():
@@ -162,6 +162,54 @@ def test_resolve_review_without_effective_date_uses_message_date():
     assert resolved.effective_date is None
     report = generate_weekly_report(collection.id)
     assert report.weeks[0].week_start == dt.date(2026, 9, 7)  # Monday of Sep 8's week
+
+
+def test_find_missing_weeks_reproduces_the_real_scenario():
+    """Apilo/Omosh/Esco pay every week; Mose is only recorded in Week 1.
+    Mose's next payment should be nudge-able toward the weeks they're
+    missing, not silently land in whatever week it happens to arrive."""
+    _, collection = _make_collection()
+    apilo = setup_service.create_contributor(collection.id, "Apilo")
+    omosh = setup_service.create_contributor(collection.id, "Omosh")
+    esco = setup_service.create_contributor(collection.id, "Esco")
+    mose = setup_service.create_contributor(collection.id, "Mose")
+
+    weeks = ["2026-08-17", "2026-08-24", "2026-08-31", "2026-09-07"]
+    for week in weeks:
+        reconciliation_service.record_manual_contribution(collection.id, apilo.id, 100, _dt(week))
+        reconciliation_service.record_manual_contribution(collection.id, omosh.id, 100, _dt(week))
+        reconciliation_service.record_manual_contribution(collection.id, esco.id, 100, _dt(week))
+    reconciliation_service.record_manual_contribution(collection.id, mose.id, 100, _dt(weeks[0]))
+
+    missing = find_missing_weeks(collection.id, mose.id)
+
+    assert missing == [dt.date(2026, 8, 24), dt.date(2026, 8, 31), dt.date(2026, 9, 7)]
+    # A contributor with no gaps has none.
+    assert find_missing_weeks(collection.id, apilo.id) == []
+
+
+def test_find_missing_weeks_unknown_contributor_raises():
+    _, collection = _make_collection()
+    try:
+        find_missing_weeks(collection.id, "contrib_missing")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "Unknown contributor" in str(exc)
+
+
+def test_set_transaction_effective_date_moves_it_between_weeks():
+    _, collection = _make_collection()
+    mose = setup_service.create_contributor(collection.id, "Mose")
+    txn = reconciliation_service.record_manual_contribution(
+        collection.id, mose.id, 100, _dt("2026-09-07")
+    )
+
+    txn.effective_date = dt.date(2026, 8, 24)
+    updated = store.transactions.update(txn)
+
+    assert updated.timestamp == _dt("2026-09-07")  # real message time untouched
+    report = generate_weekly_report(collection.id)
+    assert report.weeks[0].week_start == dt.date(2026, 8, 24)
 
 
 def _candidate(mpesa_code: str, sender_name: str, amount: int, timestamp: dt.datetime):

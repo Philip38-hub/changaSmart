@@ -135,3 +135,23 @@ def generate_weekly_report(
         weeks=weeks,
         grand_total=sum(w.weekly_total for w in weeks),
     )
+
+
+def find_missing_weeks(collection_id: str, contributor_id: str) -> list[dt.date]:
+    """Weeks where *someone* in this collection has a confirmed
+    contribution, but this specific contributor doesn't -- e.g. a
+    recurring-weekly group where one person's history has gaps. Used to
+    nudge "this auto-matched payment might actually belong to an earlier
+    week" rather than to compute any total (that's generate_weekly_report's
+    job); this never affects money, only what gets suggested."""
+    contributor = store.contributors.get(contributor_id)
+    if contributor is None or contributor.collection_id != collection_id:
+        raise ValueError(f"Unknown contributor: {contributor_id}")
+
+    report = generate_weekly_report(collection_id)
+    missing = [
+        week.week_start
+        for week in report.weeks
+        if not any(c.contributor_id == contributor_id for c in week.contributions)
+    ]
+    return sorted(missing)

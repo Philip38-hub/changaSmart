@@ -58,7 +58,12 @@ class _ReconciliationResultScreenState extends State<ReconciliationResultScreen>
                     const SizedBox(height: 10),
                     ...autoMatched.map((d) {
                       final txn = data.transactionsById[d.transactionId];
-                      return _AutoMatchedCard(decision: d, transaction: txn);
+                      return _AutoMatchedCard(
+                        api: widget.api,
+                        collectionId: widget.collectionId,
+                        decision: d,
+                        transaction: txn,
+                      );
                     }),
                     const SizedBox(height: 24),
                   ],
@@ -110,15 +115,86 @@ class _ResultData {
   _ResultData({required this.transactionsById, required this.contributorNames});
 }
 
-class _AutoMatchedCard extends StatelessWidget {
+class _AutoMatchedCard extends StatefulWidget {
+  final ApiService api;
+  final String collectionId;
   final ReconciliationDecision decision;
   final Transaction? transaction;
 
-  const _AutoMatchedCard({required this.decision, required this.transaction});
+  const _AutoMatchedCard({
+    required this.api,
+    required this.collectionId,
+    required this.decision,
+    required this.transaction,
+  });
+
+  @override
+  State<_AutoMatchedCard> createState() => _AutoMatchedCardState();
+}
+
+class _AutoMatchedCardState extends State<_AutoMatchedCard> {
+  List<DateTime>? _missingWeeks;
+  DateTime? _movedTo;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final contributorId = widget.decision.suggestedContributorId;
+    if (contributorId == null) return;
+    widget.api
+        .getMissingWeeks(collectionId: widget.collectionId, contributorId: contributorId)
+        .then((weeks) {
+      if (mounted) setState(() => _missingWeeks = weeks);
+    }).catchError((_) {
+      // Best-effort nudge only -- if this fails, just don't show it.
+      if (mounted) setState(() => _missingWeeks = const []);
+    });
+  }
+
+  Future<void> _moveTo(DateTime weekStart) async {
+    final txn = widget.transaction;
+    if (txn == null) return;
+    setState(() => _busy = true);
+    try {
+      await widget.api.setTransactionEffectiveDate(
+        transactionId: txn.id,
+        effectiveDate: weekStart,
+      );
+      if (mounted) setState(() => _movedTo = weekStart);
+    } catch (e) {
+      if (mounted && context.mounted) showErrorSnackBar(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _pickDifferentWeek(BuildContext context) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _missingWeeks?.first ?? now,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+      helpText: 'Which week should this count toward?',
+    );
+    if (picked != null) await _moveTo(picked);
+  }
+
+  String _weekRangeLabel(DateTime start) {
+    final end = start.add(const Duration(days: 6));
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(start.day)}/${two(start.month)} - ${two(end.day)}/${two(end.month)}';
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final decision = widget.decision;
+    final transaction = widget.transaction;
+    final missingWeeks = _missingWeeks;
+    final showGapNudge = _movedTo == null && missingWeeks != null && missingWeeks.isNotEmpty;
+
     return Card(
       color: AppColors.confirmed.withValues(alpha: 0.06),
       shape: RoundedRectangleBorder(
@@ -128,30 +204,68 @@ class _AutoMatchedCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
         padding: const EdgeInsets.all(14),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.check_circle, color: AppColors.confirmed),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    decision.paidBy ?? 'Unknown',
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            Row(
+              children: [
+                const Icon(Icons.check_circle, color: AppColors.confirmed),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        decision.paidBy ?? 'Unknown',
+                        style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        transaction != null ? formatKsh(transaction.amount) : '',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        decision.reason ?? 'Matched with expected contribution',
+                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ],
                   ),
-                  Text(
-                    transaction != null ? formatKsh(transaction!.amount) : '',
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    decision.reason ?? 'Matched with expected contribution',
-                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
+            if (_movedTo != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                'Recorded for the week of ${_weekRangeLabel(_movedTo!)}',
+                style: theme.textTheme.bodySmall?.copyWith(color: AppColors.confirmed, fontWeight: FontWeight.w600),
+              ),
+            ] else if (showGapNudge) ...[
+              const Divider(height: 20),
+              Text(
+                '${decision.paidBy ?? 'This contributor'} is missing the week of '
+                '${_weekRangeLabel(missingWeeks.first)}. Recorded so far for the '
+                'week of ${transaction != null ? _weekRangeLabel(transaction.timestamp) : '-'}.',
+                style: theme.textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              if (_busy)
+                const Center(child: Padding(padding: EdgeInsets.all(4), child: CircularProgressIndicator(strokeWidth: 2)))
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => _moveTo(missingWeeks.first),
+                      child: Text('Move to week of ${_weekRangeLabel(missingWeeks.first)}'),
+                    ),
+                    OutlinedButton(
+                      onPressed: () => _pickDifferentWeek(context),
+                      child: const Text('Choose a different week'),
+                    ),
+                  ],
+                ),
+            ],
           ],
         ),
       ),

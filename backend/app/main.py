@@ -39,6 +39,7 @@ from app.repositories.store import store
 from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.services import whatsapp as whatsapp_service
+from app.services.reporting import find_missing_weeks
 from app.services.reporting import generate_collection_report as build_report
 from app.services.reporting import generate_weekly_report as build_weekly_report
 
@@ -109,6 +110,10 @@ class ContributorBulkImportResponse(BaseModel):
 class ManualContributionRequest(BaseModel):
     amount: int = Field(gt=0)
     timestamp: dt.datetime
+
+
+class EffectiveDateRequest(BaseModel):
+    effective_date: dt.date
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +243,22 @@ def record_manual_contribution(
     )
 
 
+@app.get(
+    "/collections/{collection_id}/contributors/{contributor_id}/missing-weeks",
+    response_model=list[dt.date],
+)
+def get_missing_weeks(collection_id: str, contributor_id: str) -> list[dt.date]:
+    """Weeks where someone else in this collection has a confirmed
+    contribution but this contributor doesn't -- used to nudge a freshly
+    auto-matched payment ("this might actually belong to an earlier week")
+    without ever blocking or double-counting it."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    if store.contributors.get(contributor_id) is None:
+        raise HTTPException(status_code=404, detail="Contributor not found")
+    return find_missing_weeks(collection_id, contributor_id)
+
+
 @app.post("/collections/{collection_id}/transactions", response_model=Transaction)
 def create_transaction(
     collection_id: str, payload: TransactionCandidate
@@ -307,6 +328,22 @@ def resolve_review(
         effective_date=payload.effective_date,
     )
     return reconciliation_service.apply_human_review_resolution(resolution)
+
+
+@app.post("/transactions/{transaction_id}/effective-date", response_model=Transaction)
+def set_transaction_effective_date(
+    transaction_id: str, payload: EffectiveDateRequest
+) -> Transaction:
+    """Correct which period an already-resolved transaction counts toward
+    in reporting -- e.g. an auto-matched payment nudged into an earlier
+    week it actually belongs to (see the missing-weeks endpoint). Never
+    touches the transaction's real message timestamp or its credited
+    contributor, only which week it's bucketed into."""
+    transaction = store.transactions.get(transaction_id)
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    transaction.effective_date = payload.effective_date
+    return store.transactions.update(transaction)
 
 
 @app.get("/collections/{collection_id}/report", response_model=CollectionReport)

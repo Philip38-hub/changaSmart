@@ -318,6 +318,33 @@ class ApiService {
     return WeeklyCollectionReport.fromJson(result as Map<String, dynamic>);
   }
 
+  /// Weeks where someone else in this collection has a confirmed
+  /// contribution but this contributor doesn't -- used to nudge a freshly
+  /// auto-matched payment toward an earlier week it might actually belong
+  /// to, without ever blocking or double-counting it.
+  Future<List<DateTime>> getMissingWeeks({
+    required String collectionId,
+    required String contributorId,
+  }) async {
+    final result = await _get(
+      '/collections/$collectionId/contributors/$contributorId/missing-weeks',
+    );
+    return (result as List).map((e) => DateTime.parse(e as String)).toList();
+  }
+
+  /// Corrects which period an already-resolved transaction counts toward
+  /// in reporting -- never touches its real message timestamp or credited
+  /// contributor, only which week it's bucketed into.
+  Future<Transaction> setTransactionEffectiveDate({
+    required String transactionId,
+    required DateTime effectiveDate,
+  }) async {
+    final result = await _post('/transactions/$transactionId/effective-date', {
+      'effective_date': _dateOnly(effectiveDate),
+    });
+    return Transaction.fromJson(result);
+  }
+
   String _dateOnly(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'

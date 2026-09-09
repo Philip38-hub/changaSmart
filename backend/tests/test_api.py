@@ -472,3 +472,78 @@ def test_manual_contribution_unknown_contributor_returns_404():
         json={"amount": 100, "timestamp": "2026-08-17T10:00:00Z"},
     )
     assert response.status_code == 404
+
+
+def test_missing_weeks_and_effective_date_reassignment_over_http():
+    project = client.post("/projects", json={"name": "Gap Week Fund"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    apilo = client.post(
+        f"/collections/{collection['id']}/contributors", json={"name": "Apilo"}
+    ).json()
+    mose = client.post(
+        f"/collections/{collection['id']}/contributors", json={"name": "Mose"}
+    ).json()
+
+    for week in ["2026-08-17T10:00:00Z", "2026-08-24T10:00:00Z"]:
+        client.post(
+            f"/collections/{collection['id']}/contributors/{apilo['id']}/manual-contributions",
+            json={"amount": 100, "timestamp": week},
+        )
+    txn = client.post(
+        f"/collections/{collection['id']}/contributors/{mose['id']}/manual-contributions",
+        json={"amount": 100, "timestamp": "2026-08-17T10:00:00Z"},
+    ).json()
+
+    missing = client.get(
+        f"/collections/{collection['id']}/contributors/{mose['id']}/missing-weeks"
+    )
+    assert missing.status_code == 200
+    assert missing.json() == ["2026-08-24"]
+
+    # A late-arriving payment for Mose lands "today" by default...
+    late_txn = client.post(
+        f"/collections/{collection['id']}/contributors/{mose['id']}/manual-contributions",
+        json={"amount": 100, "timestamp": "2026-09-07T10:00:00Z"},
+    ).json()
+
+    # ...but gets nudged into the actual missing week instead.
+    reassigned = client.post(
+        f"/transactions/{late_txn['id']}/effective-date",
+        json={"effective_date": "2026-08-24"},
+    )
+    assert reassigned.status_code == 200
+    assert reassigned.json()["effective_date"] == "2026-08-24"
+    assert reassigned.json()["timestamp"] == "2026-09-07T10:00:00Z"  # untouched
+
+    weekly = client.get(f"/collections/{collection['id']}/report/weekly").json()
+    assert len(weekly["weeks"]) == 2
+    assert [w["weekly_total"] for w in weekly["weeks"]] == [200, 200]
+
+    # No gaps left for Mose now.
+    missing_after = client.get(
+        f"/collections/{collection['id']}/contributors/{mose['id']}/missing-weeks"
+    ).json()
+    assert missing_after == []
+
+
+def test_missing_weeks_unknown_contributor_returns_404():
+    project = client.post("/projects", json={"name": "Gap Week Fund 2"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    response = client.get(
+        f"/collections/{collection['id']}/contributors/contrib_missing/missing-weeks"
+    )
+    assert response.status_code == 404
+
+
+def test_set_effective_date_unknown_transaction_returns_404():
+    response = client.post(
+        "/transactions/txn_does_not_exist/effective-date",
+        json={"effective_date": "2026-08-24"},
+    )
+    assert response.status_code == 404
