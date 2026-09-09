@@ -62,7 +62,6 @@ Defaults (stack name, region, parameters) live in `samconfig.toml`.
 |---|---|---|
 | `BedrockModelId` | `amazon.nova-micro-v1:0` | Also controls the IAM policy's resource ARN |
 | `Stage` | `dev` | API Gateway stage name |
-| `AgentMode` | `bedrock` | `bedrock` uses the real agent; `mock` simulates decisions deterministically with zero Bedrock calls (e.g. `sam deploy --parameter-overrides AgentMode=mock` to deploy without needing Bedrock quota/access) |
 
 `AWS_REGION` is set automatically by the Lambda runtime and is not
 configurable via the template (it's a reserved Lambda environment

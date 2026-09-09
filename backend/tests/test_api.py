@@ -2,9 +2,9 @@
 
 These never need real AWS/Bedrock credentials: exact-match cases are
 resolved deterministically with no LLM call, and ambiguous cases go
-through the mock agent (AGENT_MODE defaults to "mock" -- see
-app/config.py and tests/test_mock_agent.py), which uses the same tools,
-repository, and service flow as the real Bedrock-backed agent.
+through the agent-call stub in tests/conftest.py (see
+_stub_bedrock_agent), which applies the same policy the real agent's
+system prompt requires, without any network call.
 """
 
 from fastapi.testclient import TestClient

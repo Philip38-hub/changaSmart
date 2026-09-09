@@ -17,15 +17,6 @@ Parameters:
     Type: String
     Default: dev
     Description: API Gateway stage name.
-  AgentMode:
-    Type: String
-    Default: bedrock
-    AllowedValues: [mock, bedrock]
-    Description: >
-      "bedrock" uses the real Strands Agent + Amazon Bedrock for ambiguous
-      reconciliation cases. "mock" simulates that decision deterministically
-      with zero AWS calls -- useful for demoing/deploying without Bedrock
-      quota/access.
 
 Globals:
   Function:
@@ -46,7 +37,6 @@ Resources:
           # AWS_REGION is set automatically by the Lambda runtime and must
           # not be set explicitly here.
           BEDROCK_MODEL_ID: !Ref BedrockModelId
-          AGENT_MODE: !Ref AgentMode
       Policies:
         # Scoped to exactly the model this function is configured to call
         # -- not a wildcard bedrock:* grant.

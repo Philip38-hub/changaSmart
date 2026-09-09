@@ -16,13 +16,17 @@ app is a thin client over its HTTP API (see `../backend/app/main.py`).
 ```bash
 cd ../backend
 source ../.venv/bin/activate   # create the venv first if you haven't: python3 -m venv ../.venv && pip install -r requirements.txt
-AGENT_MODE=mock uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 `--host 0.0.0.0` is required so your phone (not just this computer) can
-reach it. `AGENT_MODE=mock` (the default anyway — see `.env.example`)
-means the whole app works with zero AWS/Bedrock calls, including
-ambiguous-case reconciliation.
+reach it. Ambiguous-case reconciliation (e.g. "paid on behalf of someone
+else") calls the real Strands Agent + Amazon Bedrock -- you need AWS
+credentials with `bedrock:InvokeModel` permission and model access
+enabled for `BEDROCK_MODEL_ID` (see `../.env.example` and the root
+README's "AWS configuration" section). Everything else -- creating
+projects/contributors, exact-name-match reconciliation, learned aliases,
+reports, WhatsApp text -- works with no AWS credentials regardless.
 
 Verify it's up: `curl http://localhost:8000/health` should return
 `{"status":"ok"}`.
@@ -77,11 +81,11 @@ flutter build apk --debug --dart-define=API_BASE_URL=http://192.168.1.155:8000
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-### 5. Test with mock data
+### 5. Try the core reconciliation flow
 
-`AGENT_MODE=mock` on the backend means the entire flow — including the
-core "payment on behalf of someone else" reconciliation case — works with
-no AWS credentials. A good end-to-end path to try:
+The "payment on behalf of someone else" case below calls the real
+Bedrock-backed agent (see step 1) since the sender's name won't closely
+match any contributor. A good end-to-end path to try:
 
 1. **New Project** → name it, give it a target amount.
 2. You land on the project dashboard → **Add Main Contribution**.
@@ -136,7 +140,7 @@ an empty inbox there (see "Demo Data vs. Phone SMS" below).
 
 Everything else in this app (projects, contributors, sample data) is
 **Demo Data** -- it works identically on an emulator or a phone, backed by
-the mock/demo backend. The **M-PESA Inbox** is different: it reads
+this app's own backend. The **M-PESA Inbox** is different: it reads
 **Phone SMS**, a real, per-device data source that only a physical Android
 phone has. On an emulator (or a phone with no M-PESA messages yet) it
 correctly shows "No phone SMS available" rather than any fabricated data
@@ -238,9 +242,8 @@ Concretely:
 - Messages that aren't M-PESA at all, or are M-PESA but not an incoming
   payment (airtime, withdrawals, balance checks, promotional, ...), are
   filtered out locally and never reach the rest of the app.
-- The backend/agent (including Bedrock, in `AGENT_MODE=bedrock`) never
-  sees SMS content -- only the same structured fields manual "Record
-  Payment" entry already produces.
+- The backend/agent (including Bedrock) never sees SMS content -- only the
+  same structured fields manual "Record Payment" entry already produces.
 
 ## Architecture
 

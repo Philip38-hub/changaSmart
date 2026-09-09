@@ -6,7 +6,7 @@ INFRA_DIR := infrastructure/aws
 help:
 	@echo "Targets:"
 	@echo "  install            Create venv (if needed) and install backend/requirements.txt"
-	@echo "  test               Run the backend pytest suite (offline, AGENT_MODE=mock by default)"
+	@echo "  test               Run the backend pytest suite (offline -- the agent call is stubbed in tests)"
 	@echo "  run                Run the FastAPI app locally with uvicorn --reload"
 	@echo "  seed               Seed a running local API with sample-data/mary_medical_fund.json"
 	@echo "  sam-validate       Validate infrastructure/aws/template.yaml"
@@ -39,7 +39,7 @@ sam-build-container:
 	cd $(INFRA_DIR) && sam build --use-container
 
 sam-local-api:
-	cd $(INFRA_DIR) && sam local start-api --parameter-overrides AgentMode=mock
+	cd $(INFRA_DIR) && sam local start-api
 
 sam-deploy:
 	cd $(INFRA_DIR) && sam deploy

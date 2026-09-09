@@ -1,11 +1,14 @@
 """Core reconciliation scenarios (A-D from the QA pass), exercised through
 the real orchestration entry point `app.agent.reconcile_transaction`.
 
-`AGENT_MODE` defaults to "mock" (see app/config.py), so these run with zero
-AWS calls -- the mock agent path uses the exact same tools, repository, and
-service flow as the real Bedrock-backed agent, just with a fixed decision
-policy instead of model reasoning. This is what lets the API be developed
-against without depending on Bedrock quota/access.
+Scenarios A and C never reach the agent at all (exact match / duplicate
+handling are fully deterministic). Scenarios B and D are genuinely
+ambiguous and would call the real Bedrock-backed agent -- in this suite
+that call is stubbed by the autouse `_stub_bedrock_agent` fixture in
+conftest.py, so these run with zero AWS calls while still exercising
+reconcile_transaction's routing and the full review/apply flow. Real-model
+reasoning quality is validated manually against a live AWS account (see
+the root README's "Local/live Bedrock validation" section).
 """
 
 from __future__ import annotations
@@ -13,7 +16,6 @@ from __future__ import annotations
 import datetime as dt
 
 from app.agent import reconcile_transaction
-from app.config import Settings
 from app.models import (
     CollectionType,
     HumanReviewAction,
@@ -22,7 +24,7 @@ from app.models import (
     TransactionCandidate,
     TransactionStatus,
 )
-from app.repositories.memory import store
+from app.repositories.store import store
 from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.services.reporting import generate_collection_report
@@ -42,14 +44,6 @@ def _candidate(mpesa_code, sender_name, amount, hour=10):
         amount=amount,
         timestamp=dt.datetime(2026, 9, 4, hour, 0, tzinfo=dt.timezone.utc),
     )
-
-
-def test_config_agent_mode_defaults_to_mock():
-    assert Settings().agent_mode == "mock"
-
-
-def test_config_agent_mode_accepts_bedrock():
-    assert Settings(agent_mode="bedrock").agent_mode == "bedrock"
 
 
 def test_scenario_a_exact_match_is_matched_and_confirmed():

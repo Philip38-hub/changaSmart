@@ -28,16 +28,17 @@ API docs: http://localhost:8000/docs
 pytest
 ```
 
-All 60 tests run fully offline -- no AWS credentials needed. This includes
+All 91 tests run fully offline -- no AWS credentials needed. This includes
 ambiguous-case reconciliation (payment-on-behalf, unknown sender, etc.):
-`AGENT_MODE` defaults to `mock`, which simulates the agent's decision
-deterministically through the same tools/repository/service flow the real
-Bedrock-backed agent uses (see `app/agent.py`), just without calling AWS.
-
-To exercise the real Bedrock-backed agent instead, set `AGENT_MODE=bedrock`
-(needs AWS credentials with `bedrock:InvokeModel` and model access enabled
-for `amazon.nova-micro-v1:0`) -- see the root README's "Local/mock vs. live
-Bedrock validation" section.
+`tests/conftest.py` stubs the one function that would call Bedrock
+(`reconcile_transaction_with_agent`) with a deterministic policy
+equivalent, so the full routing/review/apply flow is exercised without
+any network call. The running app itself has no mock mode -- it always
+calls the real Bedrock-backed agent (see `app/agent.py`) for a case the
+deterministic layer can't resolve, which needs AWS credentials with
+`bedrock:InvokeModel` and model access enabled for
+`amazon.nova-micro-v1:0` -- see the root README's "Local/live Bedrock
+validation" section.
 
 ## Seed sample data
 
