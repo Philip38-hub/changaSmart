@@ -20,6 +20,11 @@ class Transaction {
   final double? confidence;
   final String? reviewReason;
 
+  /// Which period (e.g. week) this counts toward in reporting, when set to
+  /// override the message's own [timestamp] -- see resolveReview's
+  /// effectiveDate parameter.
+  final DateTime? effectiveDate;
+
   Transaction({
     required this.id,
     required this.collectionId,
@@ -34,6 +39,7 @@ class Transaction {
     required this.paidByName,
     required this.confidence,
     required this.reviewReason,
+    this.effectiveDate,
   });
 
   bool get needsReview => status == TransactionStatus.needsReview;
@@ -53,6 +59,9 @@ class Transaction {
       paidByName: json['paid_by_name'] as String?,
       confidence: (json['confidence'] as num?)?.toDouble(),
       reviewReason: json['review_reason'] as String?,
+      effectiveDate: json['effective_date'] == null
+          ? null
+          : DateTime.parse(json['effective_date'] as String),
     );
   }
 }

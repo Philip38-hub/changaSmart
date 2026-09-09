@@ -80,6 +80,7 @@ class _ReconciliationResultScreenState extends State<ReconciliationResultScreen>
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: ReviewActionCard(
+                          collectionId: widget.collectionId,
                           transaction: txn,
                           suggestedContributorName: suggestedName,
                           onResolved: (_) => setState(() => _resolvedIds.add(d.transactionId)),

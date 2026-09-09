@@ -276,11 +276,13 @@ class ApiService {
     required HumanReviewAction action,
     String? contributorId,
     String? newContributorName,
+    DateTime? effectiveDate,
   }) async {
     final result = await _post('/transactions/$transactionId/resolve-review', {
       'action': humanReviewActionToJson(action),
       if (contributorId != null) 'contributor_id': contributorId,
       if (newContributorName != null) 'new_contributor_name': newContributorName,
+      if (effectiveDate != null) 'effective_date': _dateOnly(effectiveDate),
     });
     return Transaction.fromJson(result);
   }

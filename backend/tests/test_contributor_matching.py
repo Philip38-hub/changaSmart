@@ -253,6 +253,52 @@ def test_credit_sender_as_new_contributor_does_not_seed_aliases():
     assert new_contributor.aliases == []
 
 
+def test_ignore_with_contributor_id_learns_alias_without_crediting_money():
+    """A payment already accounted for another way (e.g. a manual
+    historical backfill) can be identified and remembered for future
+    matching, without double-counting this specific transaction."""
+    _, collection = _make_collection()
+    mose = setup_service.create_contributor(collection.id, "Mose")
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX018", "perister  mokua", 100)
+    )
+
+    resolved = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=txn.id,
+            action=HumanReviewAction.IGNORE,
+            contributor_id=mose.id,
+        )
+    )
+
+    assert resolved.status == TransactionStatus.IGNORED
+    assert resolved.matched_contributor_id == mose.id
+    assert store.contributors.get(mose.id).aliases == ["perister  mokua"]
+
+    # And a future payment from that same sender now auto-matches.
+    second = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX019", "perister  mokua", 100)
+    )
+    candidates = reconciliation_service.build_candidates(
+        collection.id, second.sender_name, second.amount
+    )
+    decision = reconciliation_service.try_deterministic_match(second, candidates)
+    assert decision is not None
+    assert decision.suggested_contributor_id == mose.id
+
+
+def test_ignore_without_contributor_id_still_works_as_before():
+    _, collection = _make_collection()
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX022", "Unknown Person", 50)
+    )
+    resolved = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(transaction_id=txn.id, action=HumanReviewAction.IGNORE)
+    )
+    assert resolved.status == TransactionStatus.IGNORED
+    assert resolved.matched_contributor_id is None
+
+
 def test_alias_match_works_for_contributor_without_expected_amount():
     """Alias matching must work identically for an 'artistic name'
     contributor with no expected_amount -- no forked behavior by kind."""

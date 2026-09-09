@@ -13,12 +13,14 @@ import 'async_data_view.dart';
 /// answer; crediting the suggested contributor is a deliberate tap, never
 /// automatic just because the amount lines up.
 class ReviewActionCard extends StatefulWidget {
+  final String collectionId;
   final Transaction transaction;
   final String? suggestedContributorName;
   final void Function(Transaction updated) onResolved;
 
   const ReviewActionCard({
     super.key,
+    required this.collectionId,
     required this.transaction,
     required this.suggestedContributorName,
     required this.onResolved,
@@ -30,16 +32,24 @@ class ReviewActionCard extends StatefulWidget {
 
 class _ReviewActionCardState extends State<ReviewActionCard> {
   bool _busy = false;
+  DateTime? _overrideDate;
 
-  Future<void> _resolve(BuildContext context, ApiService api, HumanReviewAction action) async {
+  Future<void> _resolve(
+    BuildContext context,
+    ApiService api,
+    HumanReviewAction action, {
+    String? contributorIdOverride,
+  }) async {
     setState(() => _busy = true);
     try {
       final updated = await api.resolveReview(
         transactionId: widget.transaction.id,
         action: action,
-        contributorId: action == HumanReviewAction.creditSuggestedContributor
-            ? widget.transaction.matchedContributorId
-            : null,
+        contributorId: contributorIdOverride ??
+            (action == HumanReviewAction.creditSuggestedContributor
+                ? widget.transaction.matchedContributorId
+                : null),
+        effectiveDate: _overrideDate,
       );
       widget.onResolved(updated);
     } catch (e) {
@@ -50,12 +60,51 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
     }
   }
 
+  Future<void> _pickContributor(
+    BuildContext context,
+    ApiService api, {
+    required HumanReviewAction action,
+    required String sheetTitle,
+  }) async {
+    List<Contributor> contributors;
+    try {
+      contributors = await api.listContributors(widget.collectionId);
+    } catch (e) {
+      if (!context.mounted) return;
+      showErrorSnackBar(context, e);
+      return;
+    }
+    if (!context.mounted) return;
+
+    final chosen = await showModalBottomSheet<Contributor>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ContributorPickerSheet(contributors: contributors, title: sheetTitle),
+    );
+    if (chosen == null) return;
+    if (!context.mounted) return;
+    await _resolve(context, api, action, contributorIdOverride: chosen.id);
+  }
+
+  Future<void> _pickDate(BuildContext context) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _overrideDate ?? widget.transaction.timestamp,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+      helpText: 'Which date should this count toward?',
+    );
+    if (picked != null) setState(() => _overrideDate = picked);
+  }
+
   @override
   Widget build(BuildContext context) {
     final api = ApiServiceProvider.of(context);
     final theme = Theme.of(context);
     final txn = widget.transaction;
     final hasSuggestion = txn.matchedContributorId != null && widget.suggestedContributorName != null;
+    final effectiveDate = _overrideDate ?? txn.timestamp;
 
     return Card(
       shape: RoundedRectangleBorder(
@@ -100,7 +149,29 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
                 ),
               ),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.calendar_today_outlined, size: 15, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Record for: ${formatDate(effectiveDate)}',
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _busy ? null : () => _pickDate(context),
+                  child: const Text('Change'),
+                ),
+                if (_overrideDate != null)
+                  TextButton(
+                    onPressed: _busy ? null : () => setState(() => _overrideDate = null),
+                    child: const Text('Reset'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
             if (_busy)
               const Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator(strokeWidth: 2)))
             else
@@ -125,6 +196,34 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _pickContributor(
+                        context,
+                        api,
+                        action: HumanReviewAction.creditSuggestedContributor,
+                        sheetTitle: 'Choose a contributor',
+                      ),
+                      icon: const Icon(Icons.person_search_outlined, size: 18),
+                      label: const Text('Choose a different contributor'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _pickContributor(
+                        context,
+                        api,
+                        action: HumanReviewAction.ignore,
+                        sheetTitle: 'Who is this? (already recorded, won\'t be counted again)',
+                      ),
+                      icon: const Icon(Icons.link_outlined, size: 18),
+                      label: const Text('Already recorded -- just remember this name'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
                     child: TextButton(
                       onPressed: () => _resolve(context, api, HumanReviewAction.ignore),
                       style: TextButton.styleFrom(foregroundColor: AppColors.danger),
@@ -133,6 +232,72 @@ class _ReviewActionCardState extends State<ReviewActionCard> {
                   ),
                 ],
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ContributorPickerSheet extends StatefulWidget {
+  final List<Contributor> contributors;
+  final String title;
+  const _ContributorPickerSheet({required this.contributors, required this.title});
+
+  @override
+  State<_ContributorPickerSheet> createState() => _ContributorPickerSheetState();
+}
+
+class _ContributorPickerSheetState extends State<_ContributorPickerSheet> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.contributors
+        .where((c) => c.name.toLowerCase().contains(_query.toLowerCase()))
+        .toList();
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(widget.title, style: Theme.of(context).textTheme.titleMedium),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                autofocus: true,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Search contributors',
+                ),
+                onChanged: (v) => setState(() => _query = v),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
+              child: filtered.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('No contributors match'),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: filtered.length,
+                      itemBuilder: (context, index) {
+                        final c = filtered[index];
+                        return ListTile(
+                          title: Text(c.name),
+                          onTap: () => Navigator.of(context).pop(c),
+                        );
+                      },
+                    ),
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),

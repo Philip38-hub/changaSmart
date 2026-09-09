@@ -230,6 +230,18 @@ def apply_decision(decision: ReconciliationDecision) -> Transaction:
     return store.transactions.update(transaction)
 
 
+def _learn_alias(contributor: Contributor, sender_name: str) -> None:
+    """Remember sender_name as belonging to contributor, if it isn't
+    already known as that contributor's name or an existing alias."""
+    normalized_sender = normalize_name(sender_name)
+    already_known = normalize_name(contributor.name) == normalized_sender or any(
+        normalize_name(alias) == normalized_sender for alias in contributor.aliases
+    )
+    if not already_known:
+        contributor.aliases.append(sender_name)
+        store.contributors.update(contributor)
+
+
 def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transaction:
     """Apply a human's authoritative decision on a flagged transaction.
     Once applied, this is final -- the agent must not re-open it."""
@@ -246,15 +258,7 @@ def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transact
         if contributor is None:
             raise ValueError(f"Unknown contributor: {resolution.contributor_id}")
 
-        sender_name = transaction.sender_name
-        normalized_sender = normalize_name(sender_name)
-        already_known = normalize_name(contributor.name) == normalized_sender or any(
-            normalize_name(alias) == normalized_sender for alias in contributor.aliases
-        )
-        if not already_known:
-            contributor.aliases.append(sender_name)
-            store.contributors.update(contributor)
-
+        _learn_alias(contributor, transaction.sender_name)
         transaction.matched_contributor_id = resolution.contributor_id
         transaction.status = TransactionStatus.CONFIRMED
 
@@ -271,6 +275,23 @@ def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transact
 
     elif resolution.action == HumanReviewAction.IGNORE:
         transaction.status = TransactionStatus.IGNORED
+        # A contributor_id may still be supplied here -- "this is
+        # definitely X, but don't count the money" (e.g. it was already
+        # recorded another way, like a manual historical backfill). This
+        # still teaches the alias for future payments without double
+        # counting this one.
+        if resolution.contributor_id:
+            contributor = store.contributors.get(resolution.contributor_id)
+            if contributor is None:
+                raise ValueError(f"Unknown contributor: {resolution.contributor_id}")
+            _learn_alias(contributor, transaction.sender_name)
+            transaction.matched_contributor_id = resolution.contributor_id
+
+    if (
+        resolution.effective_date is not None
+        and resolution.action != HumanReviewAction.IGNORE
+    ):
+        transaction.effective_date = resolution.effective_date
 
     transaction.review_reason = f"Resolved by human review: {resolution.action.value}"
     return store.transactions.update(transaction)

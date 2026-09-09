@@ -134,6 +134,13 @@ class Transaction(BaseModel):
     confidence: float | None = None
     review_reason: str | None = None
 
+    # Which period (e.g. week) this contribution should be counted toward
+    # in reporting, when that differs from when the M-PESA message itself
+    # arrived (e.g. a message reconciled late but covering an earlier
+    # week). `timestamp` above always stays the real message time -- this
+    # is reporting-only and never touches it.
+    effective_date: dt.date | None = None
+
 
 # ---------------------------------------------------------------------------
 # Input / transfer models
@@ -180,6 +187,11 @@ class HumanReviewResolution(BaseModel):
     action: HumanReviewAction
     contributor_id: str | None = None
     new_contributor_name: str | None = None
+    # Overrides which date this contribution counts toward (e.g. the
+    # weekly report) -- useful when a message arrives late but is actually
+    # covering an earlier period. Leaves the transaction's own timestamp
+    # (when the M-PESA message itself was sent) untouched unless set.
+    effective_date: dt.date | None = None
 
 
 # ---------------------------------------------------------------------------

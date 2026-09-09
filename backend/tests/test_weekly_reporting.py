@@ -1,9 +1,10 @@
 import datetime as dt
 
-from app.models import CollectionType
+from app.models import CollectionType, HumanReviewAction, HumanReviewResolution
 from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.services import whatsapp as whatsapp_service
+from app.repositories.store import store
 from app.services.reporting import generate_weekly_report
 
 
@@ -108,3 +109,67 @@ def test_weekly_contribution_update_text_matches_expected_shape():
     assert "1. Apilo" in text
     assert "Weekly total: KSh 100" in text
     assert "Total: KSh 100" in text
+
+
+def test_resolve_review_with_effective_date_buckets_into_that_week_not_message_date():
+    """A real M-PESA message reconciled late but covering an earlier week
+    (e.g. the group already backfilled that week manually) must be
+    countable toward that earlier week without altering the transaction's
+    real message timestamp."""
+    _, collection = _make_collection()
+    mose = setup_service.create_contributor(collection.id, "Mose")
+
+    txn = reconciliation_service.create_transaction(
+        collection.id,
+        _candidate("MPX020", "perister  mokua", 100, timestamp=_dt("2026-09-08")),
+    )
+    resolved = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=txn.id,
+            action=HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR,
+            contributor_id=mose.id,
+            effective_date=dt.date(2026, 8, 17),
+        )
+    )
+
+    assert resolved.timestamp == _dt("2026-09-08")  # real message time untouched
+    assert resolved.effective_date == dt.date(2026, 8, 17)
+
+    report = generate_weekly_report(collection.id)
+    assert len(report.weeks) == 1
+    assert report.weeks[0].week_start == dt.date(2026, 8, 17)
+    assert report.weeks[0].weekly_total == 100
+
+    # And the alias was still learned normally.
+    assert store.contributors.get(mose.id).aliases == ["perister  mokua"]
+
+
+def test_resolve_review_without_effective_date_uses_message_date():
+    _, collection = _make_collection()
+    mose = setup_service.create_contributor(collection.id, "Mose")
+    txn = reconciliation_service.create_transaction(
+        collection.id,
+        _candidate("MPX021", "perister  mokua", 100, timestamp=_dt("2026-09-08")),
+    )
+    resolved = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=txn.id,
+            action=HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR,
+            contributor_id=mose.id,
+        )
+    )
+
+    assert resolved.effective_date is None
+    report = generate_weekly_report(collection.id)
+    assert report.weeks[0].week_start == dt.date(2026, 9, 7)  # Monday of Sep 8's week
+
+
+def _candidate(mpesa_code: str, sender_name: str, amount: int, timestamp: dt.datetime):
+    from app.models import TransactionCandidate
+
+    return TransactionCandidate(
+        mpesa_code=mpesa_code,
+        sender_name=sender_name,
+        amount=amount,
+        timestamp=timestamp,
+    )

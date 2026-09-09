@@ -88,6 +88,7 @@ class ReviewResolutionRequest(BaseModel):
     action: HumanReviewAction
     contributor_id: str | None = None
     new_contributor_name: str | None = None
+    effective_date: dt.date | None = None
 
 
 class ContributorBulkImportRow(BaseModel):
@@ -303,6 +304,7 @@ def resolve_review(
         action=payload.action,
         contributor_id=payload.contributor_id,
         new_contributor_name=payload.new_contributor_name,
+        effective_date=payload.effective_date,
     )
     return reconciliation_service.apply_human_review_resolution(resolution)
 

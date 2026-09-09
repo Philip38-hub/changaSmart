@@ -61,6 +61,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                     (txn) => Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: ReviewActionCard(
+                        collectionId: widget.collectionId,
                         transaction: txn,
                         suggestedContributorName: txn.matchedContributorId == null
                             ? null
