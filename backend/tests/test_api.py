@@ -669,3 +669,53 @@ def test_split_single_week_amount_returns_400_over_http():
     )
     assert response.status_code == 400
     assert "nothing to split" in response.json()["detail"]
+
+
+def test_set_contributor_expected_amount_over_http():
+    project = client.post("/projects", json={"name": "Target Fund"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    mose = client.post(
+        f"/collections/{collection['id']}/contributors", json={"name": "Mose"}
+    ).json()
+    assert mose["expected_amount"] is None
+
+    response = client.post(
+        f"/collections/{collection['id']}/contributors/{mose['id']}/expected-amount",
+        json={"expected_amount": 100},
+    )
+    assert response.status_code == 200
+    assert response.json()["expected_amount"] == 100
+
+    contributors = client.get(f"/collections/{collection['id']}/contributors").json()
+    assert next(c for c in contributors if c["id"] == mose["id"])["expected_amount"] == 100
+
+    # Can also be cleared back to null.
+    cleared = client.post(
+        f"/collections/{collection['id']}/contributors/{mose['id']}/expected-amount",
+        json={},
+    )
+    assert cleared.json()["expected_amount"] is None
+
+
+def test_set_expected_amount_unknown_collection_returns_404():
+    response = client.post(
+        "/collections/coll_missing/contributors/contrib_missing/expected-amount",
+        json={"expected_amount": 100},
+    )
+    assert response.status_code == 404
+
+
+def test_set_expected_amount_unknown_contributor_returns_404():
+    project = client.post("/projects", json={"name": "Target Fund 2"}).json()
+    collection = client.post(
+        f"/projects/{project['id']}/collections",
+        json={"type": "MAIN", "name": "Main Contribution"},
+    ).json()
+    response = client.post(
+        f"/collections/{collection['id']}/contributors/contrib_missing/expected-amount",
+        json={"expected_amount": 100},
+    )
+    assert response.status_code == 404

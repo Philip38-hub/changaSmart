@@ -123,6 +123,10 @@ class SplitContributorRequest(BaseModel):
     contributor_id: str
 
 
+class ExpectedAmountRequest(BaseModel):
+    expected_amount: int | None = Field(default=None, ge=0)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -228,6 +232,27 @@ def bulk_import_contributors(
     rows = [(r.name, r.expected_amount, r.phone) for r in payload.contributors]
     created, skipped = setup_service.bulk_create_contributors(collection_id, rows)
     return ContributorBulkImportResponse(created=created, skipped_names=skipped)
+
+
+@app.post(
+    "/collections/{collection_id}/contributors/{contributor_id}/expected-amount",
+    response_model=Contributor,
+)
+def set_contributor_expected_amount(
+    collection_id: str, contributor_id: str, payload: ExpectedAmountRequest
+) -> Contributor:
+    """Set or clear a contributor's weekly/expected amount after they've
+    already been created -- e.g. a bulk-imported list (which deliberately
+    creates contributors with none set) turns out to follow a clear
+    pattern once a few weeks of real payments are on record, and the group
+    wants to formalize it as a target going forward."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    contributor = store.contributors.get(contributor_id)
+    if contributor is None or contributor.collection_id != collection_id:
+        raise HTTPException(status_code=404, detail="Contributor not found")
+    contributor.expected_amount = payload.expected_amount
+    return store.contributors.update(contributor)
 
 
 @app.post(
