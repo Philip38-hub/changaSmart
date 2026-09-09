@@ -7,6 +7,7 @@ class Contributor {
   final int? expectedAmount;
   final String? phone;
   final ContributorStatus status;
+  final List<String> aliases;
 
   Contributor({
     required this.id,
@@ -15,6 +16,7 @@ class Contributor {
     required this.expectedAmount,
     required this.phone,
     required this.status,
+    this.aliases = const [],
   });
 
   factory Contributor.fromJson(Map<String, dynamic> json) {
@@ -25,6 +27,7 @@ class Contributor {
       expectedAmount: json['expected_amount'] as int?,
       phone: json['phone'] as String?,
       status: contributorStatusFromJson(json['status'] as String),
+      aliases: (json['aliases'] as List?)?.map((e) => e as String).toList() ?? const [],
     );
   }
 }

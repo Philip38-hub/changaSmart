@@ -1,10 +1,15 @@
 import datetime as dt
 
-from app.models import CollectionType, TransactionStatus
+from app.models import (
+    CollectionType,
+    HumanReviewAction,
+    HumanReviewResolution,
+    TransactionStatus,
+)
 from app.services import reconciliation as reconciliation_service
 from app.services import setup as setup_service
 from app.tools.reconciliation import flag_for_review
-from app.repositories.memory import store
+from app.repositories.store import store
 
 
 def _make_collection():
@@ -125,6 +130,147 @@ def test_unknown_sender_is_never_treated_as_a_strong_match():
         and not c.amount_match
         for c in candidates
     )
+
+
+def test_alias_match_is_deterministic_auto_match():
+    """A sender name that exactly matches a previously-learned alias must
+    auto-match with full confidence, without ever reaching the agent."""
+    _, collection = _make_collection()
+    jane = setup_service.create_contributor(
+        collection.id, "Jane Wanjiku", expected_amount=3000
+    )
+    jane.aliases.append("Anne Otieno")
+    store.contributors.update(jane)
+
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX010", "Anne Otieno", 5000)
+    )
+    candidates = reconciliation_service.build_candidates(
+        collection.id, txn.sender_name, txn.amount
+    )
+    decision = reconciliation_service.try_deterministic_match(txn, candidates)
+
+    assert decision is not None
+    assert decision.decision.value == "AUTO_MATCHED"
+    assert decision.suggested_contributor_id == jane.id
+    assert decision.confidence == 1.0
+    assert "remembered alias" in decision.reason
+
+
+def test_alias_hit_outranks_ambiguous_fuzzy_match_to_another_contributor():
+    """An exact alias hit for one contributor must win over an unrelated,
+    merely-fuzzy name similarity to a different contributor."""
+    _, collection = _make_collection()
+    jane = setup_service.create_contributor(collection.id, "Jane Wanjiku")
+    jane.aliases.append("J WANJIKU SACCO")
+    store.contributors.update(jane)
+    setup_service.create_contributor(collection.id, "Jane Wanjagi")
+
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX011", "J Wanjiku Sacco", 1000)
+    )
+    candidates = reconciliation_service.build_candidates(
+        collection.id, txn.sender_name, txn.amount
+    )
+    decision = reconciliation_service.try_deterministic_match(txn, candidates)
+
+    assert decision is not None
+    assert decision.suggested_contributor_id == jane.id
+
+
+def test_duplicate_alias_not_added_twice():
+    """Resolving two transactions from the same sender against the same
+    contributor must not grow the alias list unboundedly."""
+    _, collection = _make_collection()
+    jane = setup_service.create_contributor(collection.id, "Jane Wanjiku")
+
+    for code in ("MPX012", "MPX013"):
+        txn = reconciliation_service.create_transaction(
+            collection.id, _candidate(code, "Anne Otieno", 1000)
+        )
+        reconciliation_service.apply_human_review_resolution(
+            HumanReviewResolution(
+                transaction_id=txn.id,
+                action=HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR,
+                contributor_id=jane.id,
+            )
+        )
+
+    stored = store.contributors.get(jane.id)
+    assert stored.aliases == ["Anne Otieno"]
+
+
+def test_alias_seeded_via_resolve_review_credits_suggested_contributor():
+    """The full loop: an ambiguous transaction resolved by a human teaches
+    the system, so a second payment from the same sender auto-matches with
+    no further review."""
+    _, collection = _make_collection()
+    jane = setup_service.create_contributor(
+        collection.id, "Jane Wanjiku", expected_amount=3000
+    )
+
+    first = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX014", "Anne Otieno", 3000)
+    )
+    reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=first.id,
+            action=HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR,
+            contributor_id=jane.id,
+        )
+    )
+    assert store.contributors.get(jane.id).aliases == ["Anne Otieno"]
+
+    second = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX015", "Anne Otieno", 3000)
+    )
+    candidates = reconciliation_service.build_candidates(
+        collection.id, second.sender_name, second.amount
+    )
+    decision = reconciliation_service.try_deterministic_match(second, candidates)
+
+    assert decision is not None
+    assert decision.decision.value == "AUTO_MATCHED"
+    assert decision.suggested_contributor_id == jane.id
+
+
+def test_credit_sender_as_new_contributor_does_not_seed_aliases():
+    """CREDIT_SENDER_AS_CONTRIBUTOR creates a contributor whose name already
+    equals the sender -- it must not also seed an alias entry."""
+    _, collection = _make_collection()
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX016", "Peter Kamau", 500)
+    )
+    updated = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=txn.id,
+            action=HumanReviewAction.CREDIT_SENDER_AS_CONTRIBUTOR,
+        )
+    )
+
+    new_contributor = store.contributors.get(updated.matched_contributor_id)
+    assert new_contributor.name == "Peter Kamau"
+    assert new_contributor.aliases == []
+
+
+def test_alias_match_works_for_contributor_without_expected_amount():
+    """Alias matching must work identically for an 'artistic name'
+    contributor with no expected_amount -- no forked behavior by kind."""
+    _, collection = _make_collection()
+    sarcastic = setup_service.create_contributor(collection.id, "Sarcastic")
+    sarcastic.aliases.append("JOHN K OTIENO")
+    store.contributors.update(sarcastic)
+
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX017", "John K Otieno", 100)
+    )
+    candidates = reconciliation_service.build_candidates(
+        collection.id, txn.sender_name, txn.amount
+    )
+    decision = reconciliation_service.try_deterministic_match(txn, candidates)
+
+    assert decision is not None
+    assert decision.suggested_contributor_id == sarcastic.id
 
 
 def _candidate(mpesa_code: str, sender_name: str, amount: int):

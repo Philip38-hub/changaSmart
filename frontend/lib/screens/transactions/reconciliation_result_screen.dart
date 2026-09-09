@@ -145,7 +145,7 @@ class _AutoMatchedCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'Matched with expected contribution',
+                    decision.reason ?? 'Matched with expected contribution',
                     style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
                 ],

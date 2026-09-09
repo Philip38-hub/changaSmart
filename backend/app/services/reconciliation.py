@@ -57,9 +57,26 @@ def build_candidates(
     does not compute it."""
     contributors = store.contributors.list_by_collection(collection_id)
     candidates: list[ContributorCandidate] = []
+    normalized_sender = normalize_name(sender_name)
 
     for contributor in contributors:
         similarity = name_similarity(sender_name, contributor.name)
+
+        # An exact-normalized alias hit is a previously human-confirmed fact
+        # ("this literal M-PESA name belongs to this contributor"), not
+        # another fuzzy signal -- treat it as a full exact match so it
+        # auto-confirms deterministically, same as a real close name match.
+        matched_alias = next(
+            (
+                alias
+                for alias in contributor.aliases
+                if normalize_name(alias) == normalized_sender
+            ),
+            None,
+        )
+        if matched_alias is not None:
+            similarity = 1.0
+
         amount_match = (
             contributor.expected_amount is not None
             and contributor.expected_amount == amount
@@ -68,7 +85,13 @@ def build_candidates(
             continue
 
         notes = None
-        if amount_match and similarity < EXACT_MATCH_SIMILARITY:
+        if matched_alias is not None:
+            notes = (
+                f"Sender name matches a remembered alias ('{matched_alias}') "
+                f"of contributor '{contributor.name}' from a previous human "
+                "review -- treated as an exact match."
+            )
+        elif amount_match and similarity < EXACT_MATCH_SIMILARITY:
             notes = (
                 "Sender name does not clearly match, but the amount matches "
                 f"{contributor.name}'s expected contribution -- possible "
@@ -97,21 +120,28 @@ def try_deterministic_match(
     amount) without ever calling the LLM. Returns None when the case is
     genuinely ambiguous and must go through agent reasoning instead."""
     for candidate in candidates:
+        is_alias_match = bool(candidate.notes and "remembered alias" in candidate.notes)
         amount_consistent = (
-            candidate.expected_amount is None
+            is_alias_match
+            or candidate.expected_amount is None
             or candidate.expected_amount == transaction.amount
         )
         if candidate.name_similarity >= EXACT_MATCH_SIMILARITY and amount_consistent:
+            reason = (
+                candidate.notes
+                if is_alias_match
+                else (
+                    f"Sender name matches expected contributor '{candidate.name}' "
+                    "closely and the amount is consistent -- resolved "
+                    "deterministically, no ambiguity."
+                )
+            )
             return ReconciliationDecision(
                 decision=ReconciliationDecisionType.AUTO_MATCHED,
                 transaction_id=transaction.id,
                 suggested_contributor_id=candidate.contributor_id,
                 paid_by=transaction.sender_name,
-                reason=(
-                    f"Sender name matches expected contributor '{candidate.name}' "
-                    "closely and the amount is consistent -- resolved "
-                    "deterministically, no ambiguity."
-                ),
+                reason=reason,
                 confidence=1.0,
             )
     return None
@@ -181,8 +211,19 @@ def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transact
             raise ValueError(
                 "contributor_id is required to credit an existing contributor"
             )
-        if store.contributors.get(resolution.contributor_id) is None:
+        contributor = store.contributors.get(resolution.contributor_id)
+        if contributor is None:
             raise ValueError(f"Unknown contributor: {resolution.contributor_id}")
+
+        sender_name = transaction.sender_name
+        normalized_sender = normalize_name(sender_name)
+        already_known = normalize_name(contributor.name) == normalized_sender or any(
+            normalize_name(alias) == normalized_sender for alias in contributor.aliases
+        )
+        if not already_known:
+            contributor.aliases.append(sender_name)
+            store.contributors.update(contributor)
+
         transaction.matched_contributor_id = resolution.contributor_id
         transaction.status = TransactionStatus.CONFIRMED
 

@@ -107,6 +107,13 @@ class Contributor(BaseModel):
     phone: str | None = None
     status: ContributorStatus = ContributorStatus.EXPECTED
 
+    # M-PESA sender names that have previously been confirmed by a human as
+    # belonging to this contributor (e.g. a WhatsApp nickname doesn't match
+    # the real M-PESA name). Learned in apply_human_review_resolution and
+    # checked in build_candidates so a future payment from the same sender
+    # auto-matches instead of requiring review every time.
+    aliases: list[str] = Field(default_factory=list)
+
 
 class Transaction(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("txn"))
