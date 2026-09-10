@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  /* Used by LiveProjects' loading skeleton rows. Composes the `shimmer`
+     keyframe/animation already defined in tailwind.config.js (which
+     animates background-position) with the gradient background that
+     keyframe actually needs to produce a visible sweep -- without this,
+     `skeleton-shimmer` alone isn't a real class and the skeleton rows
+     render as plain, invisible blank boxes. */
+  .skeleton-shimmer {
+    @apply bg-gradient-to-r from-gray-100 via-gray-200 to-gray-100 bg-[length:200%_100%] animate-shimmer;
+  }
+}
