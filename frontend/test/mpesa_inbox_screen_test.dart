@@ -290,6 +290,36 @@ void main() {
     expect(find.text('Needs your confirmation'), findsOneWidget);
   });
 
+  testWidgets('highlightTransactionCode scrolls to and visually marks that message', (tester) async {
+    final api = ApiService(
+      baseUrl: 'http://test.local',
+      client: MockClient((r) async {
+        if (r.url.path.endsWith('/transactions')) return _json([]);
+        return _json({});
+      }),
+    );
+    final sms = FakeSmsInboxService(messages: [
+      _incoming(id: 's1', code: 'AAA111', sender: 'JOHN KAMAU', amount: 1000),
+      _incoming(id: 's2', code: 'HIGHLIGHT002', sender: 'ANNE OTIENO', amount: 3000),
+    ]);
+
+    await tester.pumpWidget(MaterialApp(
+      home: MpesaInboxScreen(
+        api: api,
+        collectionId: 'coll_1',
+        smsService: sms,
+        highlightTransactionCode: 'HIGHLIGHT002',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final highlightedCard = tester.widget<Card>(
+      find.ancestor(of: find.text('From: ANNE OTIENO'), matching: find.byType(Card)),
+    );
+    final side = (highlightedCard.shape as RoundedRectangleBorder).side;
+    expect(side.width, 1.5);
+  });
+
   testWidgets('a failed import is reported without crashing', (tester) async {
     final api = ApiService(
       baseUrl: 'http://test.local',

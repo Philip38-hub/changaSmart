@@ -23,6 +23,14 @@ class ProjectDashboardScreen extends StatefulWidget {
 
 class _ProjectDashboardScreenState extends State<ProjectDashboardScreen> {
   final _dataKey = GlobalKey<AsyncDataViewState<ProjectSummary>>();
+  bool _closing = false;
+  ProjectStatus _status = ProjectStatus.active;
+
+  @override
+  void initState() {
+    super.initState();
+    _status = widget.project.status;
+  }
 
   Future<ProjectSummary> _load() => loadProjectSummary(widget.api, widget.project);
 
@@ -40,6 +48,38 @@ class _ProjectDashboardScreenState extends State<ProjectDashboardScreen> {
       ),
     );
     if (created == true) _dataKey.currentState?.reload();
+  }
+
+  Future<void> _closeProject() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Close Project?'),
+        content: Text(
+          "This closes all of ${widget.project.name}'s collections and stops "
+          'real-time contribution alerts and auto-import for it. Reports '
+          'remain viewable afterwards.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Close')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _closing = true);
+    try {
+      await widget.api.closeProject(widget.project.id);
+      if (!mounted) return;
+      setState(() => _status = ProjectStatus.closed);
+      _dataKey.currentState?.reload();
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(context, e);
+    } finally {
+      if (mounted) setState(() => _closing = false);
+    }
   }
 
   @override
@@ -109,6 +149,20 @@ class _ProjectDashboardScreenState extends State<ProjectDashboardScreen> {
                         ),
                       ),
                     ),
+                  if (_status != ProjectStatus.closed) ...[
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _closing ? null : _closeProject,
+                        icon: _closing
+                            ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.lock_outline),
+                        label: const Text('Close Project'),
+                        style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );

@@ -29,7 +29,19 @@ class MpesaInboxScreen extends StatefulWidget {
   /// implementation.
   final SmsInboxService? smsService;
 
-  const MpesaInboxScreen({super.key, required this.api, required this.collectionId, this.smsService});
+  /// Set when this screen was opened from a real-time SMS alert (see
+  /// SmsAlertService) for a specific message -- scrolls to and visually
+  /// highlights that message once the inbox loads. The default filter
+  /// (All) already shows it regardless of import status.
+  final String? highlightTransactionCode;
+
+  const MpesaInboxScreen({
+    super.key,
+    required this.api,
+    required this.collectionId,
+    this.smsService,
+    this.highlightTransactionCode,
+  });
 
   @override
   State<MpesaInboxScreen> createState() => _MpesaInboxScreenState();
@@ -45,6 +57,8 @@ class _MpesaInboxScreenState extends State<MpesaInboxScreen> {
   bool _importing = false;
   final Set<String> _selectedIds = {};
   _Filter _filter = _Filter.all;
+  final GlobalKey _highlightedTileKey = GlobalKey();
+  bool _scrolledToHighlight = false;
 
   @override
   void initState() {
@@ -248,6 +262,22 @@ class _MpesaInboxScreenState extends State<MpesaInboxScreen> {
 
   List<MpesaSmsResult>? _lastVisibleMessages;
 
+  void _scheduleHighlightScroll(List<MpesaSmsResult> visible) {
+    if (_scrolledToHighlight || widget.highlightTransactionCode == null) return;
+    if (!visible.any((m) => m.transactionCode == widget.highlightTransactionCode)) return;
+    _scrolledToHighlight = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final highlightContext = _highlightedTileKey.currentContext;
+      if (highlightContext != null) {
+        Scrollable.ensureVisible(
+          highlightContext,
+          duration: const Duration(milliseconds: 300),
+          alignment: 0.1,
+        );
+      }
+    });
+  }
+
   Future<void> _importFromCurrentData() async {
     final visible = _lastVisibleMessages;
     if (visible == null) return;
@@ -275,6 +305,7 @@ class _MpesaInboxScreenState extends State<MpesaInboxScreen> {
           builder: (context, data, refresh) {
             final visible = _applyFilter(data.messages, data.importedCodes);
             _lastVisibleMessages = visible;
+            _scheduleHighlightScroll(visible);
 
             return RefreshIndicator(
               onRefresh: () async => refresh(),
@@ -329,11 +360,15 @@ class _MpesaInboxScreenState extends State<MpesaInboxScreen> {
                             itemBuilder: (context, index) {
                               final msg = visible[index];
                               final status = _statusFor(msg, data.importedCodes);
+                              final isHighlighted = widget.highlightTransactionCode != null &&
+                                  msg.transactionCode == widget.highlightTransactionCode;
                               return _MessageTile(
+                                key: isHighlighted ? _highlightedTileKey : null,
                                 message: msg,
                                 status: status,
                                 selectionMode: _selectionMode,
                                 selected: _selectedIds.contains(msg.id),
+                                highlighted: isHighlighted,
                                 onTap: () {
                                   if (_selectionMode) {
                                     if (status == _ImportStatus.notImported && msg.isImportable) {
@@ -473,13 +508,16 @@ class _MessageTile extends StatelessWidget {
   final _ImportStatus status;
   final bool selectionMode;
   final bool selected;
+  final bool highlighted;
   final VoidCallback onTap;
 
   const _MessageTile({
+    super.key,
     required this.message,
     required this.status,
     required this.selectionMode,
     required this.selected,
+    this.highlighted = false,
     required this.onTap,
   });
 
@@ -489,11 +527,16 @@ class _MessageTile extends StatelessWidget {
     final canSelect = status == _ImportStatus.notImported && message.isImportable;
 
     return Card(
+      color: highlighted ? theme.colorScheme.primaryContainer.withValues(alpha: 0.35) : null,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
-          color: selected ? theme.colorScheme.primary : theme.colorScheme.outlineVariant,
-          width: selected ? 1.5 : 1,
+          color: highlighted
+              ? theme.colorScheme.primary
+              : selected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.outlineVariant,
+          width: highlighted || selected ? 1.5 : 1,
         ),
       ),
       child: InkWell(

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../theme/app_theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/async_data_view.dart';
 import '../../widgets/status_badge.dart';
@@ -11,7 +12,17 @@ class TransactionsScreen extends StatefulWidget {
   final ApiService api;
   final String collectionId;
 
-  const TransactionsScreen({super.key, required this.api, required this.collectionId});
+  /// Set when this screen was opened from a real-time SMS alert (see
+  /// SmsAlertService) after a fully unattended auto-import -- scrolls to
+  /// and visually highlights that transaction once the list loads.
+  final String? highlightTransactionId;
+
+  const TransactionsScreen({
+    super.key,
+    required this.api,
+    required this.collectionId,
+    this.highlightTransactionId,
+  });
 
   @override
   State<TransactionsScreen> createState() => _TransactionsScreenState();
@@ -19,6 +30,8 @@ class TransactionsScreen extends StatefulWidget {
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
   final _dataKey = GlobalKey<AsyncDataViewState<_TransactionsData>>();
+  final GlobalKey _highlightedTileKey = GlobalKey();
+  bool _scrolledToHighlight = false;
 
   Future<_TransactionsData> _load() async {
     final transactions = await widget.api.listTransactions(widget.collectionId);
@@ -35,6 +48,48 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       builder: (_) => _RecordPaymentSheet(api: widget.api, collectionId: widget.collectionId),
     );
     if (added == true) _dataKey.currentState?.reload();
+  }
+
+  void _scheduleHighlightScroll(List<Transaction> transactions) {
+    if (_scrolledToHighlight || widget.highlightTransactionId == null) return;
+    if (!transactions.any((t) => t.id == widget.highlightTransactionId)) return;
+    _scrolledToHighlight = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final highlightContext = _highlightedTileKey.currentContext;
+      if (highlightContext != null) {
+        Scrollable.ensureVisible(
+          highlightContext,
+          duration: const Duration(milliseconds: 300),
+          alignment: 0.1,
+        );
+      }
+    });
+  }
+
+  Future<void> _undoAutoImport(Transaction transaction) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Undo automatic import?'),
+        content: Text(
+          'This will remove ${formatKsh(transaction.amount)} from '
+          '${transaction.senderName}\'s recorded contributions.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Undo')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await widget.api.reverseTransaction(transaction.id);
+      _dataKey.currentState?.reload();
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(context, e);
+    }
   }
 
   @override
@@ -63,6 +118,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                 ),
               );
             }
+            _scheduleHighlightScroll(data.transactions);
             return RefreshIndicator(
               onRefresh: () async => refresh(),
               child: ListView.separated(
@@ -75,7 +131,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                   final creditedName = txn.matchedContributorId == null
                       ? null
                       : data.contributorNames[txn.matchedContributorId];
-                  return _TransactionTile(transaction: txn, creditedName: creditedName);
+                  final isHighlighted = txn.id == widget.highlightTransactionId;
+                  return _TransactionTile(
+                    key: isHighlighted ? _highlightedTileKey : null,
+                    transaction: txn,
+                    creditedName: creditedName,
+                    highlighted: isHighlighted,
+                    onUndoAutoImport: () => _undoAutoImport(txn),
+                  );
                 },
               ),
             );
@@ -95,16 +158,30 @@ class _TransactionsData {
 class _TransactionTile extends StatelessWidget {
   final Transaction transaction;
   final String? creditedName;
+  final bool highlighted;
+  final VoidCallback onUndoAutoImport;
 
-  const _TransactionTile({required this.transaction, required this.creditedName});
+  const _TransactionTile({
+    super.key,
+    required this.transaction,
+    required this.creditedName,
+    this.highlighted = false,
+    required this.onUndoAutoImport,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final canUndo =
+        transaction.autoImportedUnattended && transaction.status == TransactionStatus.confirmed;
     return Card(
+      color: highlighted ? theme.colorScheme.primaryContainer.withValues(alpha: 0.35) : null,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: theme.colorScheme.outlineVariant),
+        side: BorderSide(
+          color: highlighted ? theme.colorScheme.primary : theme.colorScheme.outlineVariant,
+          width: highlighted ? 1.5 : 1,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -144,7 +221,33 @@ class _TransactionTile extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 8),
-            StatusBadge.transaction(transaction.status),
+            Row(
+              children: [
+                StatusBadge.transaction(transaction.status),
+                if (transaction.autoImportedUnattended) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Auto-imported',
+                      style: TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.w600, fontSize: 11),
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                if (canUndo)
+                  TextButton.icon(
+                    onPressed: onUndoAutoImport,
+                    icon: const Icon(Icons.undo, size: 16),
+                    label: const Text('Undo'),
+                    style: TextButton.styleFrom(foregroundColor: AppColors.danger, padding: EdgeInsets.zero),
+                  ),
+              ],
+            ),
           ],
         ),
       ),
