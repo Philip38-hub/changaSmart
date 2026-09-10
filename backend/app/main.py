@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -58,6 +59,19 @@ app = FastAPI(
         "fundraising projects. Prototype only -- not an M-PESA banking or "
         "payment service."
     ),
+)
+
+# Every endpoint here is already unauthenticated (see "Current Limitations"
+# in the README) -- this only widens who can read that same public data
+# from browser JavaScript specifically (e.g. the project's public landing
+# page fetching a live "top projects" list). Deliberately GET-only: it
+# must never let a browser on an arbitrary site make a mutating
+# (POST/etc.) cross-origin call on a visitor's behalf.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
 )
 
 
