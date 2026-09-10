@@ -9,6 +9,27 @@ fees, and Harambee sessions.
 > *structured transaction data* that a human or a future mobile app has
 > already extracted from M-PESA SMS confirmations.
 
+## Try the MVP now (no build required)
+
+Download the Android APK from the [latest release](https://github.com/Philip38-hub/changaSmart/releases/latest) and install it on your phone:
+
+* **app-arm64-v8a-release.apk** — use this for any phone from roughly the
+  last 7 years (most modern Android devices).
+* **app-armeabi-v7a-release.apk** — for older 32-bit devices, if the
+  above won't install.
+
+It already points at a live, publicly deployed backend
+(`https://5l95fhljcc.execute-api.us-east-1.amazonaws.com/dev`) — no local
+setup, no same-Wi-Fi requirement, works from anywhere. Just install and
+try creating a project, adding contributors, and importing an M-PESA
+message from the phone's own SMS inbox. Since Android blocks installs
+from outside the Play Store by default, you'll need to allow "install
+from unknown sources" for whatever app you use to open the downloaded
+APK.
+
+Prefer to build it yourself instead? See [Frontend (mobile UI)](#frontend-mobile-ui)
+below.
+
 ## The problem
 
 Community fundraisers in Kenya are usually run by one person (the "harambee

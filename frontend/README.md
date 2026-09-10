@@ -11,6 +11,12 @@ app is a thin client over its HTTP API (see `../backend/app/main.py`).
 
 ## Test it on your Android phone
 
+**Don't want to build anything?** Download a pre-built APK from the
+[latest GitHub release](https://github.com/Philip38-hub/changaSmart/releases/latest)
+— it's already pointed at a live, publicly deployed backend, so you can
+skip straight to step 5 below (no same-Wi-Fi requirement, works
+remotely). The rest of this section is for building from source instead.
+
 ### 1. Start the backend
 
 ```bash
@@ -214,16 +220,19 @@ install.
   is also `API_BASE_URL`'s default if you omit `--dart-define` entirely,
   so `flutter run` with no arguments targets an emulator out of the box.
 
-## Privacy: the M-PESA Inbox
+## Privacy: the M-PESA Inbox and the real-time alert
 
-The SMS inbox contains sensitive personal messages, so this feature is
-built with a strict one-way boundary:
+The SMS inbox contains sensitive personal messages, so both the on-demand
+M-PESA Inbox screen and the real-time contribution alert (see
+`lib/services/sms_alert_service.dart`) share the same one-way boundary:
 
 ```
-Phone SMS inbox
-      ↓ (flutter_sms_inbox -- reads the existing inbox, once, on demand)
+Phone SMS inbox / a newly-arrived SMS
+      ↓ (flutter_sms_inbox for the on-demand Inbox screen;
+      ↓  another_telephony's foreground+background listener for the real-time alert)
 MpesaSmsParser (100% local, pure Dart, no platform/network calls)
-      ↓ (only for messages the user explicitly selects)
+      ↓ (only for messages the user explicitly selects, or that the
+      ↓  real-time alert matched against an expected contributor)
 Structured transaction candidate (code, sender, amount, phone, timestamp)
       ↓
 POST /collections/{id}/transactions  (existing backend endpoint)
@@ -231,10 +240,16 @@ POST /collections/{id}/transactions  (existing backend endpoint)
 
 Concretely:
 
-- Only `READ_SMS` is requested -- no `RECEIVE_SMS`, `SEND_SMS`, contacts,
-  call log, location, camera, or microphone permissions.
-- No live/background SMS listening: the inbox is read once when the
-  screen opens or **Refresh** is tapped, never polled.
+- `READ_SMS` and `RECEIVE_SMS` are requested, behind a single runtime
+  permission prompt -- no `SEND_SMS`, contacts, call log, location,
+  camera, or microphone permissions.
+- The on-demand M-PESA Inbox screen still only reads the inbox once, when
+  opened or **Refresh** is tapped. Separately, the real-time alert *does*
+  listen continuously (including while the app is closed) so it can
+  notify you of a plausible contribution SMS as it arrives -- but it only
+  ever classifies each message locally and checks it against your own
+  expected contributors; see "Real-time contribution alerts" below for
+  exactly when it notifies vs. stays silent.
 - The raw SMS body is never logged, never printed to debug output, and
   never sent anywhere -- `POST /collections/{id}/transactions` only ever
   receives the parsed fields (`raw_message` is left unset). The raw text
@@ -245,6 +260,32 @@ Concretely:
 - The backend/agent (including Bedrock) never sees SMS content -- only the
   same structured fields manual "Record Payment" entry already produces.
 
+## Real-time contribution alerts
+
+Beyond the on-demand M-PESA Inbox, the app watches for new SMS in the
+background (via `lib/services/sms_alert_service.dart`) and only notifies
+when there's an actual match against one of your active collections'
+contributors -- never on every M-PESA receipt, which would just duplicate
+the phone's own SMS notification:
+
+- **Strong match** (name closely matches a contributor): "Likely
+  payment" notification, tap to review and import.
+- **Weak match** (only the amount or a mentioned group name lines up,
+  name doesn't): "Possible payment" notification, tap to review.
+- **Triple match** (name **and** amount **and** a mentioned group name
+  all line up): imported and reconciled fully unattended, with a
+  notification confirming what happened -- reversible via the **Undo**
+  action on that transaction in the Transactions screen. This can be
+  turned off (falling back to a tap-to-import "Strong" alert instead) via
+  the `sms_alert_auto_import_enabled` `SharedPreferences` flag.
+- **No match at all**: no notification -- the message still shows up in
+  the M-PESA Inbox's "Unimported" tab for manual import, exactly as
+  before.
+
+Use **Close Project** on a project's dashboard to stop real-time
+matching/alerts for that project's contributors specifically (other
+active projects keep working).
+
 ## Architecture
 
 ```
@@ -252,12 +293,14 @@ lib/
 ├── main.dart                 App entry point, theme, ApiService wiring
 ├── config/api_config.dart    API_BASE_URL (from --dart-define)
 ├── models/                   Plain Dart classes mirroring backend/app/models.py
-│   └── mpesa_sms.dart        Local-only: a classified SMS (see Privacy above)
+│   ├── mpesa_sms.dart        Local-only: a classified SMS (see Privacy above)
+│   └── contributor_candidate.dart  Mirrors the backend's candidate-scoring shape
 ├── services/
 │   ├── api_service.dart      One method per backend endpoint
 │   ├── project_summary.dart  Aggregates a project's collections for display
 │   ├── mpesa_sms_parser.dart Local M-PESA detector/parser (pure Dart, unit-tested)
-│   └── sms_inbox_service.dart  Reads the device SMS inbox + permission state
+│   ├── sms_inbox_service.dart  Reads the device SMS inbox + permission state; starts the real-time listener
+│   └── sms_alert_service.dart  Real-time contribution alert decision logic (see above)
 ├── theme/app_theme.dart      Material 3 theme, status colors
 ├── utils/format.dart         KSh formatting, dates
 ├── widgets/
@@ -272,7 +315,7 @@ lib/
     ├── collection/           Collection detail (Main or Harambee), create collection
     ├── contributors/         Contributor list + add
     ├── transactions/         Transaction list + record payment, reconciliation result
-    ├── mpesa_inbox/          Browse existing phone SMS, select, import (see Privacy above)
+    ├── mpesa_inbox/          Browse existing phone SMS, select, import (see Privacy above); also the collection picker for an ambiguous real-time alert
     ├── review/                Persistent "needs review" screen
     └── report/               Contribution summary / Harambee summary
 ```
