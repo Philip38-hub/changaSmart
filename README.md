@@ -1,6 +1,6 @@
 # ChangaSmart
 
-An AI-assisted contribution reconciliation assistant for temporary/Permanent African(currently Kenyan)
+An AI-assisted contribution reconciliation assistant for temporary/permanent African
 fundraising projects -- funerals, medical fundraisers, weddings, school
 fees, and Harambee sessions.
 
