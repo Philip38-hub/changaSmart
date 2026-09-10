@@ -1,10 +1,10 @@
 # ChangaSmart
 
-An AI-assisted contribution reconciliation assistant for temporary Kenyan
+An AI-assisted contribution reconciliation assistant for temporary/Permanent African(currently Kenyan)
 fundraising projects -- funerals, medical fundraisers, weddings, school
 fees, and Harambee sessions.
 
-> This is a hackathon prototype. It is **not** an M-PESA banking or
+> This is a prototype. It is **not** an M-PESA banking or
 > payment service, and has no direct connection to M-PESA. It reconciles
 > *structured transaction data* that a human or a future mobile app has
 > already extracted from M-PESA SMS confirmations.
