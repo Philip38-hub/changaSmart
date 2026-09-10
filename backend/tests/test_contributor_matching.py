@@ -319,6 +319,54 @@ def test_alias_match_works_for_contributor_without_expected_amount():
     assert decision.suggested_contributor_id == sarcastic.id
 
 
+def test_group_name_match_is_additive_and_does_not_change_auto_match_rules():
+    """An SMS account reference mentioning the collection's name is a
+    purely informational signal: it flags candidates as group_name_match
+    but must never, on its own, satisfy try_deterministic_match (which
+    still requires a real name/alias match)."""
+    _, collection = _make_collection()
+    jane = setup_service.create_contributor(
+        collection.id, "Jane Wanjiku", expected_amount=3000
+    )
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX030", "Anne Otieno", 3000)
+    )
+
+    with_reference = reconciliation_service.build_candidates(
+        collection.id, txn.sender_name, txn.amount, account_reference=collection.name
+    )
+    without_reference = reconciliation_service.build_candidates(
+        collection.id, txn.sender_name, txn.amount
+    )
+
+    jane_with = next(c for c in with_reference if c.contributor_id == jane.id)
+    jane_without = next(c for c in without_reference if c.contributor_id == jane.id)
+    assert jane_with.group_name_match is True
+    assert jane_without.group_name_match is False
+    # Nothing else about the scoring changes.
+    assert jane_with.name_similarity == jane_without.name_similarity
+    assert jane_with.amount_match == jane_without.amount_match
+
+    # And it still must not be enough to auto-match on its own.
+    assert reconciliation_service.try_deterministic_match(txn, with_reference) is None
+
+
+def test_group_name_match_alone_still_surfaces_a_candidate_below_similarity_floor():
+    """A totally unrelated name with no amount match would normally be
+    dropped entirely (see test_unknown_sender_is_never_treated_as_a_strong_match)
+    -- but if the SMS's account reference names the collection, that
+    candidate should still surface for a human/alert to see, not vanish."""
+    _, collection = _make_collection()
+    jane = setup_service.create_contributor(collection.id, "Jane Wanjiku")
+
+    candidates = reconciliation_service.build_candidates(
+        collection.id, "Completely Unrelated Name", 1, account_reference=collection.name
+    )
+    jane_candidate = next(c for c in candidates if c.contributor_id == jane.id)
+    assert jane_candidate.group_name_match is True
+    assert jane_candidate.name_similarity < reconciliation_service.MIN_CANDIDATE_SIMILARITY
+
+
 def _candidate(mpesa_code: str, sender_name: str, amount: int):
     from app.models import TransactionCandidate
 

@@ -164,6 +164,15 @@ class Transaction(BaseModel):
     # is reporting-only and never touches it.
     effective_date: dt.date | None = None
 
+    # True only when this transaction was imported and reconciled fully
+    # unattended by the mobile app's real-time SMS alert (name, amount,
+    # AND group/collection name all matched at once -- see
+    # reconciliation.build_candidates' group_name_match), with no human
+    # glancing at it first. Drives the "Undo automatic import" affordance
+    # in the Transactions screen and reconciliation.reverse_transaction;
+    # never set by any other path.
+    auto_imported_unattended: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Input / transfer models
@@ -181,6 +190,13 @@ class TransactionCandidate(BaseModel):
     amount: int = Field(gt=0)
     timestamp: dt.datetime
     raw_message: str | None = None
+    # Set by the mobile app's real-time SMS alert only, when it decided to
+    # import this transaction fully unattended (see
+    # Transaction.auto_imported_unattended for what that gates on). The
+    # client is the only source of this fact -- the server just persists
+    # what it's told, same as every other field here. Left False for the
+    # ordinary manual-import path.
+    auto_imported_unattended: bool = False
 
 
 class ContributorCandidate(BaseModel):
@@ -193,6 +209,14 @@ class ContributorCandidate(BaseModel):
     expected_amount: int | None = None
     name_similarity: float
     amount_match: bool
+    # Whether the SMS's account reference (e.g. a Paybill "for account
+    # <text>" field, where a payer often types their group/chama's name)
+    # fuzzy-matches this collection's or its project's name. Purely
+    # informational -- see build_candidates -- it never changes
+    # EXACT_MATCH_SIMILARITY/MIN_CANDIDATE_SIMILARITY or the deterministic
+    # auto-match rule; it only helps the mobile app's real-time alert pick
+    # which collection an SMS belongs to and how confidently to notify.
+    group_name_match: bool = False
     notes: str | None = None
 
 

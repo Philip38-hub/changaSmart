@@ -27,11 +27,13 @@ from app.models import (
     CollectionStatus,
     CollectionType,
     Contributor,
+    ContributorCandidate,
     HumanReviewAction,
     HumanReviewResolution,
     PeriodCollectionReport,
     PeriodType,
     Project,
+    ProjectStatus,
     SplitInstallment,
     SplitPreview,
     SplitResult,
@@ -161,6 +163,25 @@ def get_project_endpoint(project_id: str) -> Project:
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+@app.post("/projects/{project_id}/close", response_model=Project)
+def close_project(project_id: str) -> Project:
+    """Close a project and every non-closed collection under it, so it
+    stops accepting new activity -- including the mobile app's real-time
+    SMS alert/auto-import, which only ever matches against ACTIVE
+    collections (see app.services.reconciliation.build_candidates
+    callers). Idempotent -- closing an already-closed project just
+    re-closes any collections that weren't already closed."""
+    project = store.projects.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.status = ProjectStatus.CLOSED
+    for collection in store.collections.list_by_project(project_id):
+        if collection.status != CollectionStatus.CLOSED:
+            collection.status = CollectionStatus.CLOSED
+            store.collections.update(collection)
+    return store.projects.update(project)
 
 
 @app.post("/projects/{project_id}/collections", response_model=Collection)
@@ -314,6 +335,27 @@ def create_transaction(
     return reconciliation_service.create_transaction(collection_id, payload)
 
 
+@app.get(
+    "/collections/{collection_id}/candidates", response_model=list[ContributorCandidate]
+)
+def get_candidates(
+    collection_id: str,
+    sender_name: str,
+    amount: int,
+    account_reference: str | None = None,
+) -> list[ContributorCandidate]:
+    """Read-only preview of contributor candidates for a not-yet-created
+    transaction shape -- wraps the same pure build_candidates function the
+    reconciliation pipeline uses internally, without creating or changing
+    anything. Lets the mobile app's real-time SMS alert decide whether and
+    how confidently to notify before the user has imported anything."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return reconciliation_service.build_candidates(
+        collection_id, sender_name, amount, account_reference
+    )
+
+
 @app.get("/collections/{collection_id}/transactions", response_model=list[Transaction])
 def list_transactions(collection_id: str) -> list[Transaction]:
     if store.collections.get(collection_id) is None:
@@ -371,6 +413,19 @@ def resolve_review(
         effective_date=payload.effective_date,
     )
     return reconciliation_service.apply_human_review_resolution(resolution)
+
+
+@app.post("/transactions/{transaction_id}/reverse", response_model=Transaction)
+def reverse_transaction(transaction_id: str) -> Transaction:
+    """Undo an unattended real-time auto-import (see
+    Transaction.auto_imported_unattended): removes it from financial
+    totals while keeping it, and the fact it was auto-imported, as a
+    permanent audit trail. Only valid for a CONFIRMED transaction that was
+    auto-imported unattended -- anything else has no "undo the
+    automation" to perform."""
+    if store.transactions.get(transaction_id) is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return reconciliation_service.reverse_transaction(transaction_id)
 
 
 @app.post("/transactions/{transaction_id}/effective-date", response_model=Transaction)

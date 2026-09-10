@@ -41,6 +41,13 @@ EXACT_MATCH_SIMILARITY = 0.92
 # Below this, a name is not even worth surfacing as a candidate unless the
 # amount matches exactly (a possible "paid on behalf of" situation).
 MIN_CANDIDATE_SIMILARITY = 0.4
+# How closely an SMS's account reference (e.g. a Paybill "for account
+# <text>" field) must resemble a collection's/project's name to count as
+# a "the payer told us which group this is for" signal -- see
+# ContributorCandidate.group_name_match. Deliberately looser than
+# MIN_CANDIDATE_SIMILARITY: a free-typed reference is often an
+# abbreviation ("WELFARE" for "Kamau Family Welfare Group"), not a name.
+GROUP_NAME_MATCH_SIMILARITY = 0.5
 
 
 def normalize_name(name: str) -> str:
@@ -59,15 +66,40 @@ def is_duplicate_transaction(collection_id: str, mpesa_code: str) -> bool:
     return store.transactions.find_by_mpesa_code(collection_id, mpesa_code) is not None
 
 
+def _group_name_match(collection_id: str, account_reference: str | None) -> bool:
+    """Whether an SMS's account reference plausibly names this collection
+    or its project -- see GROUP_NAME_MATCH_SIMILARITY. Purely informational
+    (see ContributorCandidate.group_name_match); returns False whenever
+    there's no account reference to compare, rather than guessing."""
+    if not account_reference:
+        return False
+    collection = store.collections.get(collection_id)
+    if collection is None:
+        return False
+    if name_similarity(account_reference, collection.name) >= GROUP_NAME_MATCH_SIMILARITY:
+        return True
+    project = store.projects.get(collection.project_id)
+    if project is not None and name_similarity(account_reference, project.name) >= GROUP_NAME_MATCH_SIMILARITY:
+        return True
+    return False
+
+
 def build_candidates(
-    collection_id: str, sender_name: str, amount: int
+    collection_id: str,
+    sender_name: str,
+    amount: int,
+    account_reference: str | None = None,
 ) -> list[ContributorCandidate]:
     """Rank expected contributors as possible matches for a transaction.
     Pure deterministic scoring -- the agent reasons over this output, it
-    does not compute it."""
+    does not compute it. `account_reference` (e.g. a Paybill "for account
+    <text>" field from the SMS) is optional and only ever adds the
+    informational group_name_match signal -- it never changes which
+    candidates are returned or their name_similarity/amount_match."""
     contributors = store.contributors.list_by_collection(collection_id)
     candidates: list[ContributorCandidate] = []
     normalized_sender = normalize_name(sender_name)
+    group_name_match = _group_name_match(collection_id, account_reference)
 
     for contributor in contributors:
         similarity = name_similarity(sender_name, contributor.name)
@@ -91,7 +123,11 @@ def build_candidates(
             contributor.expected_amount is not None
             and contributor.expected_amount == amount
         )
-        if similarity < MIN_CANDIDATE_SIMILARITY and not amount_match:
+        if (
+            similarity < MIN_CANDIDATE_SIMILARITY
+            and not amount_match
+            and not group_name_match
+        ):
             continue
 
         notes = None
@@ -107,6 +143,9 @@ def build_candidates(
                 f"{contributor.name}'s expected contribution -- possible "
                 "payment made on behalf of this contributor."
             )
+        if group_name_match:
+            group_note = "SMS account reference mentions this collection's name."
+            notes = f"{notes} {group_note}" if notes else group_note
 
         candidates.append(
             ContributorCandidate(
@@ -115,6 +154,7 @@ def build_candidates(
                 expected_amount=contributor.expected_amount,
                 name_similarity=round(similarity, 3),
                 amount_match=amount_match,
+                group_name_match=group_name_match,
                 notes=notes,
             )
         )
@@ -366,6 +406,7 @@ def create_transaction(
         amount=candidate.amount,
         timestamp=candidate.timestamp,
         raw_message=candidate.raw_message,
+        auto_imported_unattended=candidate.auto_imported_unattended,
     )
 
     if is_duplicate_transaction(collection_id, candidate.mpesa_code):
@@ -415,6 +456,33 @@ def _learn_alias(contributor: Contributor, sender_name: str) -> None:
     if not already_known:
         contributor.aliases.append(sender_name)
         store.contributors.update(contributor)
+
+
+def reverse_transaction(transaction_id: str) -> Transaction:
+    """Undo an unattended real-time auto-import (see
+    Transaction.auto_imported_unattended): removes the transaction from
+    financial totals (generate_collection_report/generate_period_report
+    only sum CONFIRMED transactions) while keeping it, and the fact that
+    it was auto-imported, as a permanent audit trail. Deliberately does
+    NOT touch any alias that was learned -- undoing one mistaken
+    unattended import shouldn't also erase a previously-good alias
+    mapping. Only meaningful for a CONFIRMED, unattended auto-import; any
+    other transaction has no "undo the automation" to perform."""
+    transaction = store.transactions.get(transaction_id)
+    if transaction is None:
+        raise ValueError(f"Unknown transaction: {transaction_id}")
+    if not transaction.auto_imported_unattended or transaction.status != TransactionStatus.CONFIRMED:
+        raise ValueError(
+            "Only a CONFIRMED transaction that was auto-imported unattended "
+            "can be reversed."
+        )
+
+    transaction.status = TransactionStatus.IGNORED
+    transaction.matched_contributor_id = None
+    transaction.review_reason = (
+        "Reversed by user; was auto-imported unattended via real-time SMS match."
+    )
+    return store.transactions.update(transaction)
 
 
 def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transaction:
