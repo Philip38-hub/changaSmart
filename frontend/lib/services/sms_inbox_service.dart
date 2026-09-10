@@ -1,10 +1,36 @@
 import 'dart:io' show Platform;
 
+import 'package:another_telephony/telephony.dart' as telephony;
 import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../models/mpesa_sms.dart';
 import 'mpesa_sms_parser.dart';
+import 'sms_alert_service.dart';
+
+/// Entry point for a newly-arrived SMS while ChangaSmart is running (in
+/// the foreground or backgrounded but not killed). Delegates entirely to
+/// SmsAlertService -- this function only adapts another_telephony's
+/// message shape to it.
+Future<void> _handleIncomingSms(telephony.SmsMessage message) {
+  return SmsAlertService.process(
+    body: message.body,
+    address: message.address,
+    timestampMillis: message.date,
+  );
+}
+
+/// Entry point for a newly-arrived SMS while the app process is fully
+/// killed. Must be a genuine top-level function (not a closure or
+/// instance method) so another_telephony can resolve it via a
+/// PluginUtilities callback handle and re-invoke it in a fresh background
+/// isolate -- see startBackgroundService in that package. `vm:entry-point`
+/// stops AOT tree-shaking from stripping it since nothing in this app
+/// calls it directly.
+@pragma('vm:entry-point')
+Future<void> handleIncomingSmsInBackground(telephony.SmsMessage message) {
+  return _handleIncomingSms(message);
+}
 
 /// Mirrors permission_handler's PermissionStatus plus a device-capability
 /// case, so the UI can render each state distinctly (see task section 4:
@@ -17,12 +43,16 @@ enum SmsAccessState { granted, denied, permanentlyDenied, unavailable }
 /// "poll" -- this only runs when the user opens/refreshes the screen.
 const int _defaultQueryCount = 500;
 
-/// Reads the Android SMS inbox that already exists on the device (never a
-/// live/background listener -- see flutter_sms_inbox, which queries the
-/// platform's SMS content provider directly) and classifies each message
-/// locally via [MpesaSmsParser]. This is the ONLY boundary between the
-/// phone's SMS inbox and the rest of the app: everything downstream only
-/// ever sees the classified, structured result -- never the full inbox.
+/// Reads the Android SMS inbox that already exists on the device (via
+/// flutter_sms_inbox, which queries the platform's SMS content provider
+/// directly) and classifies each message locally via [MpesaSmsParser].
+/// [loadMpesaMessages] itself is still pull-only, run on demand when the
+/// M-PESA Inbox screen opens/refreshes -- but [startRealtimeAlerts] (see
+/// below) separately watches for new SMS as they arrive, even while the
+/// app is closed, and hands each one to [SmsAlertService]. This class is
+/// the ONLY boundary between the phone's SMS inbox and the rest of the
+/// app: everything downstream only ever sees the classified, structured
+/// result -- never the full inbox.
 class SmsInboxService {
   final SmsQuery _query = SmsQuery();
 
@@ -45,13 +75,32 @@ class SmsInboxService {
   Future<SmsAccessState> requestPermission() async {
     if (!isPlatformSupported) return SmsAccessState.unavailable;
     final status = await Permission.sms.request();
-    return _mapStatus(status);
+    final result = _mapStatus(status);
+    if (result == SmsAccessState.granted) startRealtimeAlerts();
+    return result;
   }
 
   SmsAccessState _mapStatus(PermissionStatus status) {
     if (status.isGranted || status.isLimited) return SmsAccessState.granted;
     if (status.isPermanentlyDenied) return SmsAccessState.permanentlyDenied;
     return SmsAccessState.denied;
+  }
+
+  /// Starts watching for new M-PESA-shaped SMS as they arrive -- in the
+  /// foreground via [handleIncomingSmsInBackground]'s sibling
+  /// [_handleIncomingSms], and even while the app is fully closed via
+  /// that same top-level background entry point (see
+  /// another_telephony's listenIncomingSms). Safe to call more than once
+  /// (e.g. on every app boot where permission is already granted, and
+  /// again right after the user grants it) -- another_telephony just
+  /// re-registers the same handlers. Requires SMS permission to already
+  /// be granted; callers should check [checkPermission] first.
+  void startRealtimeAlerts() {
+    if (!isPlatformSupported) return;
+    telephony.Telephony.instance.listenIncomingSms(
+      onNewMessage: _handleIncomingSms,
+      onBackgroundMessage: handleIncomingSmsInBackground,
+    );
   }
 
   /// Reads the existing inbox and returns messages relevant to Mchango:

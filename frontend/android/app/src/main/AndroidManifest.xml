@@ -1,11 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Read-only access to the SMS inbox that already exists on the
-         device, so the M-PESA Inbox screen can browse existing messages.
-         Deliberately NOT requesting RECEIVE_SMS or SEND_SMS: live or
-         background SMS monitoring is an explicit non-goal for this
-         milestone (see frontend/lib/screens/mpesa_inbox/). -->
+         device, so the M-PESA Inbox screen can browse existing messages
+         (see frontend/lib/screens/mpesa_inbox/). -->
     <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- Lets the real-time contribution alert (see
+         frontend/lib/services/sms_alert_service.dart) notice a new M-PESA
+         SMS as it arrives, even while the app is closed, so the user
+         doesn't have to remember to open the app and check. Requested via
+         the same runtime SMS permission prompt as READ_SMS above (see
+         SmsInboxService/permission_handler's Permission.sms group), never
+         a second, separate prompt. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <application
         android:label="changasmart"
         android:name="${applicationName}"
