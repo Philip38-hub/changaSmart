@@ -162,6 +162,15 @@ class ApiService {
     return Collection.fromJson(result);
   }
 
+  /// Closes a project and every non-closed collection under it, so it
+  /// stops accepting new activity -- including the real-time SMS
+  /// alert/auto-import, which only ever matches against active
+  /// collections.
+  Future<Project> closeProject(String projectId) async {
+    final result = await _post('/projects/$projectId/close');
+    return Project.fromJson(result);
+  }
+
   // ---------------------------------------------------------------------
   // Contributors
   // ---------------------------------------------------------------------
@@ -246,6 +255,12 @@ class ApiService {
   /// Records a structured transaction candidate -- as a future mobile app
   /// would after parsing an M-PESA SMS locally. For now this is manual
   /// entry, mirroring how a harambee secretary records a payment today.
+  ///
+  /// [autoImportedUnattended] should only ever be true when the real-time
+  /// SMS alert decided to import this transaction fully unattended (name,
+  /// amount, and group name all matched at once) -- it drives the "Undo
+  /// automatic import" action later. Left false for the ordinary manual
+  /// (tap-to-import) path.
   Future<Transaction> createTransaction({
     required String collectionId,
     required String mpesaCode,
@@ -253,6 +268,7 @@ class ApiService {
     required int amount,
     String? senderPhone,
     DateTime? timestamp,
+    bool autoImportedUnattended = false,
   }) async {
     final result = await _post('/collections/$collectionId/transactions', {
       'mpesa_code': mpesaCode,
@@ -260,6 +276,7 @@ class ApiService {
       'amount': amount,
       'timestamp': (timestamp ?? DateTime.now()).toUtc().toIso8601String(),
       if (senderPhone != null && senderPhone.isNotEmpty) 'sender_phone': senderPhone,
+      if (autoImportedUnattended) 'auto_imported_unattended': true,
     });
     return Transaction.fromJson(result);
   }
@@ -267,6 +284,38 @@ class ApiService {
   // ---------------------------------------------------------------------
   // Reconciliation
   // ---------------------------------------------------------------------
+
+  /// Read-only preview of contributor candidates for a not-yet-created
+  /// transaction shape -- used by the real-time SMS alert to decide
+  /// whether/how confidently to notify, without creating anything.
+  /// [accountReference] is the SMS's Paybill "for account `<text>`" field,
+  /// if the parser found one.
+  Future<List<ContributorCandidate>> getCandidates({
+    required String collectionId,
+    required String senderName,
+    required int amount,
+    String? accountReference,
+  }) async {
+    final params = <String>[
+      'sender_name=${Uri.encodeQueryComponent(senderName)}',
+      'amount=$amount',
+      if (accountReference != null && accountReference.isNotEmpty)
+        'account_reference=${Uri.encodeQueryComponent(accountReference)}',
+    ];
+    final result = await _get('/collections/$collectionId/candidates?${params.join('&')}');
+    return (result as List)
+        .map((e) => ContributorCandidate.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Undoes an unattended real-time auto-import (see
+  /// Transaction.autoImportedUnattended) -- removes it from financial
+  /// totals while keeping it, and the fact it was auto-imported, as a
+  /// permanent audit trail.
+  Future<Transaction> reverseTransaction(String transactionId) async {
+    final result = await _post('/transactions/$transactionId/reverse');
+    return Transaction.fromJson(result);
+  }
 
   Future<List<ReconciliationDecision>> reconcile(String collectionId) async {
     final result = await _post('/collections/$collectionId/reconcile');

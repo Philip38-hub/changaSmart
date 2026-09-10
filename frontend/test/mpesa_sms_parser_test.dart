@@ -202,6 +202,37 @@ void main() {
     });
   });
 
+  group('account reference (Paybill "for account" clause)', () {
+    test('extracts a group name typed as the Paybill account reference', () {
+      final r = _classify(
+        'RKX2ABC456 Confirmed. Ksh1,000.00 received from JOHN KAMAU '
+        '254712345678 for account KAMAU WELFARE GROUP on 4/9/26 at 8:42 PM. '
+        'New Utility balance is Ksh50,000.00.',
+      );
+      expect(r.kind, MpesaSmsKind.incomingPayment);
+      expect(r.accountReference, 'KAMAU WELFARE GROUP');
+    });
+
+    test('an ordinary person-to-person receipt has no account reference', () {
+      final r = _classify(
+        'QKJ7ABC123 Confirmed. You have received Ksh3,000.00 from JOHN KAMAU '
+        '254712345678 on 4/9/26 at 8:42 PM. New M-PESA balance is Ksh15,230.00.',
+      );
+      expect(r.accountReference, isNull);
+      // Absence of an account reference never affects importability.
+      expect(r.isImportable, isTrue);
+    });
+
+    test('a present account reference is also carried on an unparsed message', () {
+      final r = _classify(
+        'Confirmed. Ksh1,000.00 received for account MARY CHAMA on 4/9/26 '
+        'at 8:42 PM.',
+      );
+      expect(r.kind, MpesaSmsKind.unparsed);
+      expect(r.accountReference, 'MARY CHAMA');
+    });
+  });
+
   group('sender vs. eventual credited contributor', () {
     test('parser only ever reports the literal SMS sender, never a contributor name', () {
       // The parser has no concept of "expected contributors" at all --

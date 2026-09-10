@@ -42,6 +42,18 @@ class MpesaSmsParser {
   // optionally starting with 0 or 254.
   static final RegExp _phonePattern = RegExp(r'\b(0|254)\d{8,9}\b');
 
+  // Paybill receipts often carry a free-typed "for account <text>" clause
+  // -- this is where a payer sometimes types a group/chama name as their
+  // account reference. Bounded by " on " (the date/time clause that
+  // always follows in real M-PESA messages), mirroring how
+  // _senderPattern stops at the first token that doesn't belong to a
+  // name. Not present on an ordinary person-to-person "received" SMS, so
+  // this is always optional -- never required for isImportable.
+  static final RegExp _accountReferencePattern = RegExp(
+    r'for account\s+([A-Za-z0-9][A-Za-z0-9\s\-]*?)\s+on\s',
+    caseSensitive: false,
+  );
+
   static const _incomingKeywords = ['received'];
 
   static const _exclusionKeywordReasons = <String, String>{
@@ -114,6 +126,7 @@ class MpesaSmsParser {
     final senderName = _extractSenderName(body);
     final senderPhone = _extractSenderPhone(body);
     final transactionCode = _extractTransactionCode(body);
+    final accountReference = _extractAccountReference(body);
 
     if (amount != null && senderName != null && transactionCode != null) {
       return MpesaSmsResult(
@@ -126,6 +139,7 @@ class MpesaSmsParser {
         senderName: senderName,
         senderPhone: senderPhone,
         amount: amount,
+        accountReference: accountReference,
       );
     }
 
@@ -145,6 +159,7 @@ class MpesaSmsParser {
       senderName: senderName,
       senderPhone: senderPhone,
       amount: amount,
+      accountReference: accountReference,
       reason: 'Could not reliably extract: $missing',
     );
   }
@@ -169,6 +184,13 @@ class MpesaSmsParser {
   static String? _extractSenderPhone(String body) {
     final match = _phonePattern.firstMatch(body);
     return match?.group(0);
+  }
+
+  static String? _extractAccountReference(String body) {
+    final match = _accountReferencePattern.firstMatch(body);
+    final reference = match?.group(1)?.trim();
+    if (reference == null || reference.isEmpty) return null;
+    return reference;
   }
 
   static String? _extractTransactionCode(String body) {

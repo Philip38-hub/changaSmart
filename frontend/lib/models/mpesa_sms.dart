@@ -37,6 +37,14 @@ class MpesaSmsResult {
   final String? senderPhone;
   final int? amount;
 
+  /// Best-effort extraction of a Paybill "for account `<text>`" clause,
+  /// where a payer sometimes types a group/chama name as their account
+  /// reference. Null whenever the SMS has no such clause -- never
+  /// fabricated, same philosophy as every other field here. Used by the
+  /// real-time alert to help identify which collection an SMS is for; it
+  /// has no bearing on [isImportable].
+  final String? accountReference;
+
   /// Human-readable reason for [MpesaSmsKind.unparsed] or
   /// [MpesaSmsKind.excludedOther] -- e.g. "Airtime purchase", "Could not
   /// find a transaction code". Null for incomingPayment/notMpesa.
@@ -52,6 +60,7 @@ class MpesaSmsResult {
     this.senderName,
     this.senderPhone,
     this.amount,
+    this.accountReference,
     this.reason,
   });
 

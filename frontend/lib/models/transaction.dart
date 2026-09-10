@@ -25,6 +25,12 @@ class Transaction {
   /// effectiveDate parameter.
   final DateTime? effectiveDate;
 
+  /// True only when this transaction was imported and reconciled fully
+  /// unattended by the real-time SMS alert (name, amount, AND group name
+  /// all matched at once), with no human glancing at it first. Drives the
+  /// "Undo automatic import" action on the Transactions screen.
+  final bool autoImportedUnattended;
+
   Transaction({
     required this.id,
     required this.collectionId,
@@ -40,6 +46,7 @@ class Transaction {
     required this.confidence,
     required this.reviewReason,
     this.effectiveDate,
+    this.autoImportedUnattended = false,
   });
 
   bool get needsReview => status == TransactionStatus.needsReview;
@@ -62,6 +69,7 @@ class Transaction {
       effectiveDate: json['effective_date'] == null
           ? null
           : DateTime.parse(json['effective_date'] as String),
+      autoImportedUnattended: json['auto_imported_unattended'] as bool? ?? false,
     );
   }
 }
