@@ -61,6 +61,27 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
     if (edited == true) _dataKey.currentState?.reload();
   }
 
+  /// Records a contribution with no M-PESA message behind it at all --
+  /// e.g. money collected directly on the organizer's own phone number
+  /// (so it can never generate a "you have received" SMS to themselves),
+  /// or cash. Lets the amount and which period it counts toward be set
+  /// directly, at any point -- not just during the initial list import
+  /// (see ImportContributorsScreen, which uses the same backend endpoint
+  /// for backfilling a pasted historical tracker).
+  Future<void> _recordContribution(ContributorBreakdownEntry entry) async {
+    final recorded = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _RecordContributionSheet(
+        api: widget.api,
+        collectionId: widget.collectionId,
+        contributorId: entry.contributorId,
+        contributorName: entry.name,
+      ),
+    );
+    if (recorded == true) _dataKey.currentState?.reload();
+  }
+
   Future<void> _importContributors() async {
     final imported = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -158,7 +179,15 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
                               ),
                             ),
                             StatusBadge.contributorPaid(entry.hasPaid),
-                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: () => _recordContribution(entry),
+                              icon: const Icon(Icons.payments_outlined, size: 20),
+                              tooltip: 'Record a contribution (no M-PESA message)',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            ),
+                            const SizedBox(width: 6),
                             Icon(Icons.edit_outlined, size: 18, color: Theme.of(context).colorScheme.outline),
                           ],
                         ),
@@ -169,6 +198,143 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// Records a contribution directly against a known contributor with no
+/// M-PESA message behind it -- confirmed immediately, since a human is
+/// naming the contributor directly (see
+/// reconciliation.record_manual_contribution). The date chosen here is
+/// what the contribution counts toward in reports, exactly like
+/// ReviewActionCard's/TransactionsScreen's "Edit period" pickers -- there
+/// is no separate "real message time" to preserve for a manual entry.
+class _RecordContributionSheet extends StatefulWidget {
+  final ApiService api;
+  final String collectionId;
+  final String contributorId;
+  final String contributorName;
+
+  const _RecordContributionSheet({
+    required this.api,
+    required this.collectionId,
+    required this.contributorId,
+    required this.contributorName,
+  });
+
+  @override
+  State<_RecordContributionSheet> createState() => _RecordContributionSheetState();
+}
+
+class _RecordContributionSheetState extends State<_RecordContributionSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _amountController = TextEditingController();
+  DateTime _date = DateTime.now();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+      helpText: 'Which period should this count toward?',
+    );
+    if (picked != null) setState(() => _date = picked);
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _submitting = true);
+    try {
+      await widget.api.recordManualContribution(
+        collectionId: widget.collectionId,
+        contributorId: widget.contributorId,
+        amount: int.parse(_amountController.text.trim().replaceAll(',', '')),
+        timestamp: _date,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(context, e);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Record Contribution', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'For ${widget.contributorName} -- no M-PESA message needed. '
+              'Use this when money was received directly (e.g. your own '
+              'number, cash) and never generated a confirmation SMS.',
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _amountController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(labelText: 'Amount', prefixText: 'KSh '),
+              autofocus: true,
+              validator: (v) {
+                final parsed = int.tryParse((v ?? '').replaceAll(',', ''));
+                if (parsed == null) return 'Enter a whole number';
+                if (parsed <= 0) return 'Amount must be greater than zero';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.calendar_today_outlined, size: 16, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Counts toward ${formatDate(_date)}',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+                TextButton(onPressed: _pickDate, child: const Text('Change')),
+              ],
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _submitting ? null : _submit,
+                child: _submitting
+                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Record Contribution'),
+              ),
+            ),
+          ],
         ),
       ),
     );
