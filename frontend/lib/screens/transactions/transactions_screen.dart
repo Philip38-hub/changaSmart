@@ -66,6 +66,34 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     });
   }
 
+  /// Lets the user correct which period a transaction counts toward at
+  /// any time -- not just during the initial reconciliation review (see
+  /// ReviewActionCard's date picker and ReconciliationResultScreen's
+  /// "Move to week of..." nudge, both one-time and easy to miss/skip).
+  /// Never touches the real M-PESA message timestamp -- only
+  /// effective_date, exactly like those two flows.
+  Future<void> _editPeriod(Transaction transaction) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: transaction.effectiveDate ?? transaction.timestamp,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+      helpText: 'Which period should this count toward?',
+    );
+    if (picked == null) return;
+    try {
+      await widget.api.setTransactionEffectiveDate(
+        transactionId: transaction.id,
+        effectiveDate: picked,
+      );
+      _dataKey.currentState?.reload();
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(context, e);
+    }
+  }
+
   Future<void> _undoAutoImport(Transaction transaction) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -138,6 +166,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                     creditedName: creditedName,
                     highlighted: isHighlighted,
                     onUndoAutoImport: () => _undoAutoImport(txn),
+                    onEditPeriod: () => _editPeriod(txn),
                   );
                 },
               ),
@@ -160,6 +189,7 @@ class _TransactionTile extends StatelessWidget {
   final String? creditedName;
   final bool highlighted;
   final VoidCallback onUndoAutoImport;
+  final VoidCallback onEditPeriod;
 
   const _TransactionTile({
     super.key,
@@ -167,6 +197,7 @@ class _TransactionTile extends StatelessWidget {
     required this.creditedName,
     this.highlighted = false,
     required this.onUndoAutoImport,
+    required this.onEditPeriod,
   });
 
   @override
@@ -216,6 +247,26 @@ class _TransactionTile extends StatelessWidget {
                       color: theme.colorScheme.primary,
                       fontWeight: FontWeight.w600,
                     ),
+                  ),
+                ],
+              ),
+            ],
+            if (transaction.status == TransactionStatus.confirmed) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(Icons.calendar_today_outlined, size: 14, color: theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Counts toward ${formatDate(transaction.effectiveDate ?? transaction.timestamp)}',
+                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: onEditPeriod,
+                    style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                    child: const Text('Edit period', style: TextStyle(fontSize: 12)),
                   ),
                 ],
               ),
