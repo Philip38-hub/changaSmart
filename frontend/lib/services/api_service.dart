@@ -18,6 +18,12 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// Sentinel used by [ApiService.updateContributor] to distinguish "leave
+/// unchanged" from "explicitly clear this field to null" -- Dart has no
+/// other way to tell an omitted named parameter from one passed as
+/// literal null.
+const Object _unset = Object();
+
 /// Thin wrapper around the ChangaSmart backend HTTP API. One method per
 /// endpoint, matching backend/app/main.py exactly -- see that file for the
 /// authoritative contract. No business logic here: the backend (in
@@ -39,6 +45,14 @@ class ApiService {
 
   Future<dynamic> _post(String path, [Map<String, dynamic>? body]) => _send(
         () => _client.post(
+          _uri(path),
+          headers: _headers,
+          body: body == null ? null : jsonEncode(body),
+        ),
+      );
+
+  Future<dynamic> _patch(String path, [Map<String, dynamic>? body]) => _send(
+        () => _client.patch(
           _uri(path),
           headers: _headers,
           body: body == null ? null : jsonEncode(body),
@@ -191,6 +205,33 @@ class ApiService {
       if (expectedAmount != null) 'expected_amount': expectedAmount,
       if (phone != null && phone.isNotEmpty) 'phone': phone,
     });
+    return Contributor.fromJson(result);
+  }
+
+  /// Edits an existing contributor's name/expected_amount/phone at any
+  /// point in the collection's life (e.g. correcting a nickname, or adding
+  /// the group's own collector after the fact once their self-received
+  /// money is noticed) -- a partial update, so only fields actually passed
+  /// are changed. Pass [expectedAmount]/[phone] as an explicit `null` to
+  /// clear that field, or omit them (leaving the [_unset] default) to
+  /// leave it untouched -- Dart otherwise can't tell "not provided" from
+  /// "provided null".
+  Future<Contributor> updateContributor({
+    required String collectionId,
+    required String contributorId,
+    String? name,
+    Object? expectedAmount = _unset,
+    Object? phone = _unset,
+  }) async {
+    final body = <String, dynamic>{
+      if (name != null) 'name': name,
+      if (!identical(expectedAmount, _unset)) 'expected_amount': expectedAmount,
+      if (!identical(phone, _unset)) 'phone': phone,
+    };
+    final result = await _patch(
+      '/collections/$collectionId/contributors/$contributorId',
+      body,
+    );
     return Contributor.fromJson(result);
   }
 

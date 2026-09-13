@@ -151,6 +151,17 @@ class ExpectedAmountRequest(BaseModel):
     expected_amount: int | None = Field(default=None, ge=0)
 
 
+class ContributorUpdateRequest(BaseModel):
+    """Partial update -- only fields actually present are changed. A field
+    set to null explicitly clears it (expected_amount/phone); an omitted
+    field is left untouched. Distinguished via `model_fields_set` since
+    Pydantic can't tell "omitted" from "explicitly null" any other way."""
+
+    name: str | None = Field(default=None, min_length=1)
+    expected_amount: int | None = Field(default=None, ge=0)
+    phone: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -277,6 +288,36 @@ def bulk_import_contributors(
     rows = [(r.name, r.expected_amount, r.phone) for r in payload.contributors]
     created, skipped = setup_service.bulk_create_contributors(collection_id, rows)
     return ContributorBulkImportResponse(created=created, skipped_names=skipped)
+
+
+@app.patch(
+    "/collections/{collection_id}/contributors/{contributor_id}",
+    response_model=Contributor,
+)
+def update_contributor(
+    collection_id: str, contributor_id: str, payload: ContributorUpdateRequest
+) -> Contributor:
+    """Edit a contributor's name/expected_amount/phone at any point in the
+    collection's life -- e.g. correcting a nickname, or adding the group's
+    own collector after the fact once their self-received money is
+    noticed. Every total is recomputed live from the current contributor
+    list on each report request, so no separate recalculation step is
+    needed after this."""
+    if store.collections.get(collection_id) is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    contributor = store.contributors.get(contributor_id)
+    if contributor is None or contributor.collection_id != collection_id:
+        raise HTTPException(status_code=404, detail="Contributor not found")
+
+    fields_set = payload.model_fields_set
+    return setup_service.update_contributor(
+        contributor_id,
+        name=payload.name if "name" in fields_set else None,
+        expected_amount=payload.expected_amount,
+        clear_expected_amount="expected_amount" in fields_set and payload.expected_amount is None,
+        phone=payload.phone,
+        clear_phone="phone" in fields_set and payload.phone is None,
+    )
 
 
 @app.post(

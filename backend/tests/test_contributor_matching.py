@@ -367,6 +367,150 @@ def test_group_name_match_alone_still_surfaces_a_candidate_below_similarity_floo
     assert jane_candidate.name_similarity < reconciliation_service.MIN_CANDIDATE_SIMILARITY
 
 
+def test_amount_match_falls_back_to_collection_common_period_amount():
+    """Sarcastic has no expected_amount of their own (an individually-added
+    or bulk-imported contributor commonly doesn't), but the collection's
+    other contributor has established KSh 100 as the group's usual
+    per-period amount. A payment for exactly that amount from an
+    unrecognized sender should still surface Sarcastic as a candidate
+    worth a human glance, not vanish entirely just because Sarcastic's own
+    row has no target set -- the real gap behind the "loud thoughts" test
+    project's Dalton Joseph payment."""
+    _, collection = _make_collection()
+    peter = setup_service.create_contributor(
+        collection.id, "Peter Otieno", expected_amount=100
+    )
+    reconciliation_service.record_manual_contribution(
+        collection.id, peter.id, 100, dt.datetime(2026, 8, 4, 10, 0, tzinfo=dt.timezone.utc)
+    )
+    sarcastic = setup_service.create_contributor(collection.id, "Sarcastic")
+
+    candidates = reconciliation_service.build_candidates(
+        collection.id, "Dalton Joseph", 100
+    )
+    sarcastic_candidate = next(
+        c for c in candidates if c.contributor_id == sarcastic.id
+    )
+    assert sarcastic_candidate.amount_match is True
+    assert sarcastic_candidate.name_similarity < reconciliation_service.MIN_CANDIDATE_SIMILARITY
+
+    # Must never be enough to auto-match on its own -- still needs a human.
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX060", "Dalton Joseph", 100)
+    )
+    assert reconciliation_service.try_deterministic_match(txn, candidates) is None
+
+
+def test_amount_match_fallback_does_not_apply_when_no_history_exists_yet():
+    """With no confirmed transactions anywhere in the collection, there is
+    no 'common period amount' to infer -- an unrecognized sender must not
+    be flagged against every amount-less contributor by pure coincidence."""
+    _, collection = _make_collection()
+    setup_service.create_contributor(collection.id, "Sarcastic")
+
+    candidates = reconciliation_service.build_candidates(
+        collection.id, "Dalton Joseph", 100
+    )
+    assert candidates == []
+
+
+def test_first_contribution_without_effective_date_defaults_to_earliest_missing_period():
+    """A contributor's very first credited contribution, with no explicit
+    effective_date, should count toward the earliest period the collection
+    already has history for (e.g. its first week) rather than whatever
+    week the payment happened to be reconciled on."""
+    from app.services.reporting import _period_start
+
+    _, collection = _make_collection()
+    peter = setup_service.create_contributor(
+        collection.id, "Peter Otieno", expected_amount=100
+    )
+    week1_payment = dt.datetime(2026, 8, 4, 10, 0, tzinfo=dt.timezone.utc)
+    week2_payment = dt.datetime(2026, 8, 11, 10, 0, tzinfo=dt.timezone.utc)
+    reconciliation_service.record_manual_contribution(collection.id, peter.id, 100, week1_payment)
+    reconciliation_service.record_manual_contribution(collection.id, peter.id, 100, week2_payment)
+    expected_first_week = _period_start(
+        week1_payment.date(), collection.period, collection.period_anchor
+    )
+
+    sarcastic = setup_service.create_contributor(collection.id, "Sarcastic")
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX070", "Dalton Joseph", 100)
+    )
+    # Reconciled well after the two known weeks -- must not default here.
+    txn.timestamp = dt.datetime(2026, 9, 1, 9, 0, tzinfo=dt.timezone.utc)
+    store.transactions.update(txn)
+
+    resolved = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=txn.id,
+            action=HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR,
+            contributor_id=sarcastic.id,
+        )
+    )
+
+    assert resolved.effective_date == expected_first_week
+
+
+def test_repeat_contribution_effective_date_is_not_overridden():
+    """Only a contributor's *first* credited contribution gets this
+    catch-up default -- a repeat payment keeps the old behaviour (no
+    override, so reporting falls back to the transaction's own
+    timestamp), since a returning contributor is far more likely paying
+    for the current period."""
+    _, collection = _make_collection()
+    jane = setup_service.create_contributor(
+        collection.id, "Jane Wanjiku", expected_amount=100
+    )
+    reconciliation_service.record_manual_contribution(
+        collection.id, jane.id, 100, dt.datetime(2026, 8, 4, 10, 0, tzinfo=dt.timezone.utc)
+    )
+
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX071", "Jane W", 100)
+    )
+    resolved = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=txn.id,
+            action=HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR,
+            contributor_id=jane.id,
+        )
+    )
+
+    assert resolved.effective_date is None
+
+
+def test_explicit_effective_date_always_wins_over_the_first_contribution_default():
+    _, collection = _make_collection()
+    from app.services.reporting import _period_start
+
+    peter = setup_service.create_contributor(
+        collection.id, "Peter Otieno", expected_amount=100
+    )
+    reconciliation_service.record_manual_contribution(
+        collection.id, peter.id, 100, dt.datetime(2026, 8, 4, 10, 0, tzinfo=dt.timezone.utc)
+    )
+    sarcastic = setup_service.create_contributor(collection.id, "Sarcastic")
+    txn = reconciliation_service.create_transaction(
+        collection.id, _candidate("MPX072", "Dalton Joseph", 100)
+    )
+    chosen_date = dt.date(2026, 8, 20)
+
+    resolved = reconciliation_service.apply_human_review_resolution(
+        HumanReviewResolution(
+            transaction_id=txn.id,
+            action=HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR,
+            contributor_id=sarcastic.id,
+            effective_date=chosen_date,
+        )
+    )
+
+    assert resolved.effective_date == chosen_date
+    assert resolved.effective_date != _period_start(
+        dt.date(2026, 8, 4), collection.period, collection.period_anchor
+    )
+
+
 def _candidate(mpesa_code: str, sender_name: str, amount: int):
     from app.models import TransactionCandidate
 

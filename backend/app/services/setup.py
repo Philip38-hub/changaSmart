@@ -59,6 +59,41 @@ def create_contributor(
     )
 
 
+def update_contributor(
+    contributor_id: str,
+    name: str | None = None,
+    expected_amount: int | None = None,
+    clear_expected_amount: bool = False,
+    phone: str | None = None,
+    clear_phone: bool = False,
+) -> Contributor:
+    """Edit an existing contributor's name/expected_amount/phone at any
+    point -- e.g. renaming a nickname once the real name is known, or
+    adding the group's own collector (who never M-PESAs themselves) after
+    the fact. Every report/total is recomputed live from the current
+    contributor list on every read (see reporting.generate_collection_report
+    and generate_period_report), so there is nothing else to recalculate
+    here -- editing the row is the whole fix. `clear_expected_amount`/
+    `clear_phone` exist because `None` alone is ambiguous between "leave
+    unchanged" and "clear this field"."""
+    contributor = store.contributors.get(contributor_id)
+    if contributor is None:
+        raise ValueError(f"Unknown contributor: {contributor_id}")
+
+    if name is not None:
+        contributor.name = name
+    if clear_expected_amount:
+        contributor.expected_amount = None
+    elif expected_amount is not None:
+        contributor.expected_amount = expected_amount
+    if clear_phone:
+        contributor.phone = None
+    elif phone is not None:
+        contributor.phone = phone
+
+    return store.contributors.update(contributor)
+
+
 def bulk_create_contributors(
     collection_id: str, rows: list[tuple[str, int | None, str | None]]
 ) -> tuple[list[Contributor], list[str]]:

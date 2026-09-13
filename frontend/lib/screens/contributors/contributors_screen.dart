@@ -27,9 +27,38 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
     final added = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _AddContributorSheet(api: widget.api, collectionId: widget.collectionId),
+      builder: (_) => _ContributorFormSheet(api: widget.api, collectionId: widget.collectionId),
     );
     if (added == true) _dataKey.currentState?.reload();
+  }
+
+  /// Contributors can be renamed/re-targeted at any point in the
+  /// collection's life -- e.g. correcting a nickname, or adding the
+  /// group's own collector after the fact once money that never generated
+  /// an M-PESA-to-self message is noticed. The breakdown entry the list
+  /// renders doesn't carry `phone`, so fetch the full contributor record
+  /// to prefill the edit form.
+  Future<void> _editContributor(ContributorBreakdownEntry entry) async {
+    final Contributor existing;
+    try {
+      final contributors = await widget.api.listContributors(widget.collectionId);
+      existing = contributors.firstWhere((c) => c.id == entry.contributorId);
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(context, e);
+      return;
+    }
+    if (!mounted) return;
+    final edited = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ContributorFormSheet(
+        api: widget.api,
+        collectionId: widget.collectionId,
+        existing: existing,
+      ),
+    );
+    if (edited == true) _dataKey.currentState?.reload();
   }
 
   Future<void> _importContributors() async {
@@ -106,27 +135,33 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
                       borderRadius: BorderRadius.circular(14),
                       side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(entry.name, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-                                const SizedBox(height: 4),
-                                Text(
-                                  targetAmount != null
-                                      ? '${formatKsh(entry.totalPaid)} of ${formatKsh(targetAmount)}'
-                                      : formatKsh(entry.totalPaid),
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                ),
-                              ],
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => _editContributor(entry),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(entry.name, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    targetAmount != null
+                                        ? '${formatKsh(entry.totalPaid)} of ${formatKsh(targetAmount)}'
+                                        : formatKsh(entry.totalPaid),
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          StatusBadge.contributorPaid(entry.hasPaid),
-                        ],
+                            StatusBadge.contributorPaid(entry.hasPaid),
+                            const SizedBox(width: 8),
+                            Icon(Icons.edit_outlined, size: 18, color: Theme.of(context).colorScheme.outline),
+                          ],
+                        ),
                       ),
                     ),
                   );
@@ -140,22 +175,36 @@ class _ContributorsScreenState extends State<ContributorsScreen> {
   }
 }
 
-class _AddContributorSheet extends StatefulWidget {
+/// Add-or-edit form for a contributor. In add mode (`existing == null`) it
+/// creates a new row; in edit mode it PATCHes the given contributor's
+/// name/expected_amount/phone -- the list (and every total derived from
+/// it) can be corrected at any point in the collection's life, not just
+/// at initial setup.
+class _ContributorFormSheet extends StatefulWidget {
   final ApiService api;
   final String collectionId;
+  final Contributor? existing;
 
-  const _AddContributorSheet({required this.api, required this.collectionId});
+  const _ContributorFormSheet({
+    required this.api,
+    required this.collectionId,
+    this.existing,
+  });
 
   @override
-  State<_AddContributorSheet> createState() => _AddContributorSheetState();
+  State<_ContributorFormSheet> createState() => _ContributorFormSheetState();
 }
 
-class _AddContributorSheetState extends State<_AddContributorSheet> {
+class _ContributorFormSheetState extends State<_ContributorFormSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _amountController = TextEditingController();
-  final _phoneController = TextEditingController();
+  late final _nameController = TextEditingController(text: widget.existing?.name ?? '');
+  late final _amountController = TextEditingController(
+    text: widget.existing?.expectedAmount?.toString() ?? '',
+  );
+  late final _phoneController = TextEditingController(text: widget.existing?.phone ?? '');
   bool _submitting = false;
+
+  bool get _isEditing => widget.existing != null;
 
   @override
   void dispose() {
@@ -170,12 +219,23 @@ class _AddContributorSheetState extends State<_AddContributorSheet> {
     setState(() => _submitting = true);
     try {
       final amountText = _amountController.text.trim().replaceAll(',', '');
-      await widget.api.createContributor(
-        collectionId: widget.collectionId,
-        name: _nameController.text.trim(),
-        expectedAmount: amountText.isEmpty ? null : int.parse(amountText),
-        phone: _phoneController.text.trim(),
-      );
+      final phoneText = _phoneController.text.trim();
+      if (_isEditing) {
+        await widget.api.updateContributor(
+          collectionId: widget.collectionId,
+          contributorId: widget.existing!.id,
+          name: _nameController.text.trim(),
+          expectedAmount: amountText.isEmpty ? null : int.parse(amountText),
+          phone: phoneText.isEmpty ? null : phoneText,
+        );
+      } else {
+        await widget.api.createContributor(
+          collectionId: widget.collectionId,
+          name: _nameController.text.trim(),
+          expectedAmount: amountText.isEmpty ? null : int.parse(amountText),
+          phone: phoneText,
+        );
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (e) {
@@ -201,7 +261,10 @@ class _AddContributorSheetState extends State<_AddContributorSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Add Contributor', style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              _isEditing ? 'Edit Contributor' : 'Add Contributor',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _nameController,
@@ -237,7 +300,7 @@ class _AddContributorSheetState extends State<_AddContributorSheet> {
                 onPressed: _submitting ? null : _submit,
                 child: _submitting
                     ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Text('Add Contributor'),
+                    : Text(_isEditing ? 'Save Changes' : 'Add Contributor'),
               ),
             ),
           ],

@@ -66,6 +66,23 @@ def is_duplicate_transaction(collection_id: str, mpesa_code: str) -> bool:
     return store.transactions.find_by_mpesa_code(collection_id, mpesa_code) is not None
 
 
+def _collection_common_period_amount(collection_id: str) -> int | None:
+    """The single most common amount among this collection's own confirmed
+    transactions -- the group's de-facto per-period amount even when no
+    individual contributor has an explicit expected_amount set (bulk-import
+    deliberately leaves it unset; see setup.bulk_create_contributors). Used
+    as a fallback amount-match signal in build_candidates below, the same
+    way _infer_period_amount falls back to it for split purposes."""
+    confirmed = [
+        t
+        for t in store.transactions.list_by_collection(collection_id)
+        if t.status == TransactionStatus.CONFIRMED
+    ]
+    if not confirmed:
+        return None
+    return Counter(t.amount for t in confirmed).most_common(1)[0][0]
+
+
 def _group_name_match(collection_id: str, account_reference: str | None) -> bool:
     """Whether an SMS's account reference plausibly names this collection
     or its project -- see GROUP_NAME_MATCH_SIMILARITY. Purely informational
@@ -100,6 +117,7 @@ def build_candidates(
     candidates: list[ContributorCandidate] = []
     normalized_sender = normalize_name(sender_name)
     group_name_match = _group_name_match(collection_id, account_reference)
+    common_period_amount = _collection_common_period_amount(collection_id)
 
     for contributor in contributors:
         similarity = name_similarity(sender_name, contributor.name)
@@ -123,9 +141,23 @@ def build_candidates(
             contributor.expected_amount is not None
             and contributor.expected_amount == amount
         )
+        # A contributor with no expected_amount of their own (the common
+        # case for a bulk-imported list) still counts as an amount match
+        # when the payment equals the collection's own common per-period
+        # amount -- otherwise a payment from an unrecognized sender that
+        # exactly matches everyone else's usual contribution would surface
+        # no signal at all, purely because this one contributor's row
+        # happens to lack an explicit target. See
+        # _collection_common_period_amount.
+        matched_common_amount = (
+            contributor.expected_amount is None
+            and common_period_amount is not None
+            and common_period_amount == amount
+        )
         if (
             similarity < MIN_CANDIDATE_SIMILARITY
             and not amount_match
+            and not matched_common_amount
             and not group_name_match
         ):
             continue
@@ -143,6 +175,12 @@ def build_candidates(
                 f"{contributor.name}'s expected contribution -- possible "
                 "payment made on behalf of this contributor."
             )
+        elif matched_common_amount and similarity < EXACT_MATCH_SIMILARITY:
+            notes = (
+                f"Sender name does not clearly match, but KSh {amount} is "
+                f"this collection's usual per-period amount -- possible "
+                f"payment from {contributor.name} under an unrecognized name."
+            )
         if group_name_match:
             group_note = "SMS account reference mentions this collection's name."
             notes = f"{notes} {group_note}" if notes else group_note
@@ -153,7 +191,7 @@ def build_candidates(
                 name=contributor.name,
                 expected_amount=contributor.expected_amount,
                 name_similarity=round(similarity, 3),
-                amount_match=amount_match,
+                amount_match=amount_match or matched_common_amount,
                 group_name_match=group_name_match,
                 notes=notes,
             )
@@ -485,12 +523,40 @@ def reverse_transaction(transaction_id: str) -> Transaction:
     return store.transactions.update(transaction)
 
 
+def _default_effective_date_for_first_contribution(
+    collection_id: str, contributor_id: str
+) -> dt.date | None:
+    """When a human credits a contributor without saying which period the
+    payment covers, and this is that contributor's first-ever confirmed
+    contribution in the collection, assume they're catching up from the
+    earliest period they're missing (e.g. the collection's first week)
+    rather than whichever period happens to contain today -- the date the
+    payment was merely reconciled on, not necessarily what it was for. A
+    contributor with existing history keeps the old behaviour (falls back
+    to the transaction's own timestamp in generate_period_report) since a
+    repeat payment is far more likely to be for the current period. Returns
+    None (no override) when there's no history at all yet to catch up
+    against, or when the contributor already has a confirmed payment."""
+    already_has_history = any(
+        t.matched_contributor_id == contributor_id
+        and t.status == TransactionStatus.CONFIRMED
+        for t in store.transactions.list_by_collection(collection_id)
+    )
+    if already_has_history:
+        return None
+    missing = find_missing_periods(collection_id, contributor_id)
+    return missing[0] if missing else None
+
+
 def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transaction:
     """Apply a human's authoritative decision on a flagged transaction.
     Once applied, this is final -- the agent must not re-open it."""
     transaction = store.transactions.get(resolution.transaction_id)
     if transaction is None:
         raise ValueError(f"Unknown transaction: {resolution.transaction_id}")
+
+    credited_contributor_id: str | None = None
+    default_effective_date: dt.date | None = None
 
     if resolution.action == HumanReviewAction.CREDIT_SUGGESTED_CONTRIBUTOR:
         if not resolution.contributor_id:
@@ -501,9 +567,19 @@ def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transact
         if contributor is None:
             raise ValueError(f"Unknown contributor: {resolution.contributor_id}")
 
+        # Must be resolved before this transaction's own status/match flips
+        # to CONFIRMED below -- the in-memory store hands back live object
+        # references, so once mutated, this very transaction would already
+        # count as the contributor's "existing history" against itself.
+        if resolution.effective_date is None:
+            default_effective_date = _default_effective_date_for_first_contribution(
+                transaction.collection_id, resolution.contributor_id
+            )
+
         _learn_alias(contributor, transaction.sender_name)
         transaction.matched_contributor_id = resolution.contributor_id
         transaction.status = TransactionStatus.CONFIRMED
+        credited_contributor_id = resolution.contributor_id
 
     elif resolution.action == HumanReviewAction.CREDIT_SENDER_AS_CONTRIBUTOR:
         new_contributor = store.contributors.create(
@@ -513,8 +589,13 @@ def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transact
                 phone=transaction.sender_phone,
             )
         )
+        if resolution.effective_date is None:
+            default_effective_date = _default_effective_date_for_first_contribution(
+                transaction.collection_id, new_contributor.id
+            )
         transaction.matched_contributor_id = new_contributor.id
         transaction.status = TransactionStatus.CONFIRMED
+        credited_contributor_id = new_contributor.id
 
     elif resolution.action == HumanReviewAction.IGNORE:
         transaction.status = TransactionStatus.IGNORED
@@ -530,11 +611,11 @@ def apply_human_review_resolution(resolution: HumanReviewResolution) -> Transact
             _learn_alias(contributor, transaction.sender_name)
             transaction.matched_contributor_id = resolution.contributor_id
 
-    if (
-        resolution.effective_date is not None
-        and resolution.action != HumanReviewAction.IGNORE
-    ):
-        transaction.effective_date = resolution.effective_date
+    if resolution.action != HumanReviewAction.IGNORE:
+        if resolution.effective_date is not None:
+            transaction.effective_date = resolution.effective_date
+        elif credited_contributor_id is not None:
+            transaction.effective_date = default_effective_date
 
     transaction.review_reason = f"Resolved by human review: {resolution.action.value}"
     return store.transactions.update(transaction)
